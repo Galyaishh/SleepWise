@@ -9,35 +9,53 @@ import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
+import androidx.core.view.WindowCompat
 
-private val DarkColorScheme = darkColorScheme(
-    primary = Purple80,
-    secondary = PurpleGrey80,
-    tertiary = Pink80
+private val SleepWiseLightColorScheme = lightColorScheme(
+    primary              = SleepPrimary,
+    onPrimary            = SleepOnPrimary,
+    primaryContainer     = SleepPrimaryContainer,
+    onPrimaryContainer   = SleepOnPrimaryContainer,
+    secondary            = SleepSecondary,
+    onSecondary          = SleepOnPrimary,
+    secondaryContainer   = SleepSecondaryContainer,
+    onSecondaryContainer = SleepOnSecondaryContainer,
+    background           = SleepBackground,
+    onBackground         = SleepOnBackground,
+    surface              = SleepSurface,
+    onSurface            = SleepOnBackground,
+    surfaceVariant       = SleepSurfaceVariant,
+    onSurfaceVariant     = SleepTextSecondary,
+    error                = SleepError,
 )
 
-private val LightColorScheme = lightColorScheme(
-    primary = Purple40,
-    secondary = PurpleGrey40,
-    tertiary = Pink40
-
-    /* Other default colors to override
-    background = Color(0xFFFFFBFE),
-    surface = Color(0xFFFFFBFE),
-    onPrimary = Color.White,
-    onSecondary = Color.White,
-    onTertiary = Color.White,
-    onBackground = Color(0xFF1C1B1F),
-    onSurface = Color(0xFF1C1B1F),
-    */
+private val SleepWiseDarkColorScheme = darkColorScheme(
+    primary              = SleepDarkPrimary,
+    onPrimary            = SleepDarkOnPrimary,
+    primaryContainer     = SleepDarkPrimaryContainer,
+    onPrimaryContainer   = SleepDarkPrimary,
+    secondary            = SleepSecondary,
+    onSecondary          = SleepDarkOnPrimary,
+    secondaryContainer   = SleepDarkInsightBg,
+    onSecondaryContainer = SleepDarkInsightText,
+    background           = SleepDarkBackground,
+    onBackground         = SleepDarkOnBackground,
+    surface              = SleepDarkSurface,
+    onSurface            = SleepDarkOnBackground,
+    surfaceVariant       = SleepDarkSurfaceVariant,
+    onSurfaceVariant     = SleepDarkTextSecondary,
+    error                = SleepError,
 )
 
 @Composable
 fun SleepWisePOCTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
-    // Dynamic color is available on Android 12+
-    dynamicColor: Boolean = true,
+    // Dynamic color disabled — we use our own sleep-friendly palette
+    dynamicColor: Boolean = false,
     content: @Composable () -> Unit
 ) {
     val colorScheme = when {
@@ -45,14 +63,22 @@ fun SleepWisePOCTheme(
             val context = LocalContext.current
             if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
         }
+        darkTheme -> SleepWiseDarkColorScheme
+        else      -> SleepWiseLightColorScheme
+    }
 
-        darkTheme -> DarkColorScheme
-        else -> LightColorScheme
+    val view = LocalView.current
+    if (!view.isInEditMode) {
+        SideEffect {
+            val window = (view.context as? Activity)?.window ?: return@SideEffect
+            window.statusBarColor = colorScheme.background.toArgb()
+            WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = !darkTheme
+        }
     }
 
     MaterialTheme(
         colorScheme = colorScheme,
-        typography = Typography,
-        content = content
+        typography  = Typography,
+        content     = content
     )
 }

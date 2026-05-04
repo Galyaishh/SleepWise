@@ -2,16 +2,41 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Internet permission for backend API calls -->
+    <!-- ── Network ──────────────────────────────────────────────────────────── -->
     <uses-permission android:name="android.permission.INTERNET" />
 
-    <!-- Health Connect Permissions -->
+    <!-- ── Health Connect ───────────────────────────────────────────────────── -->
     <uses-permission android:name="android.permission.health.READ_HEART_RATE" />
     <uses-permission android:name="android.permission.health.READ_HEART_RATE_VARIABILITY" />
     <uses-permission android:name="android.permission.health.READ_SLEEP" />
     <uses-permission android:name="android.permission.health.READ_OXYGEN_SATURATION" />
     <uses-permission android:name="android.permission.health.READ_RESPIRATORY_RATE" />
     <uses-permission android:name="android.permission.health.READ_RESTING_HEART_RATE" />
+
+    <!-- ── Smart Alarm ──────────────────────────────────────────────────────── -->
+    <!-- Exact alarm scheduling:
+         USE_EXACT_ALARM (API 33+) is auto-granted for alarm-clock apps — no user prompt needed.
+         SCHEDULE_EXACT_ALARM is kept for API 31–32 only (requires user grant on those versions). -->
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"
+        android:maxSdkVersion="32"
+        tools:ignore="ProtectedPermissions" />
+    <!-- Keeps CPU awake when the BroadcastReceiver fires -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Vibrate when alarm rings -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- Re-schedule alarms after device reboot -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Foreground service for overnight monitoring -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- Foreground service types -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <!-- Post notifications (Android 13+) — requested at runtime in MainActivity -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Full-screen alarm notification shown over the lock screen.
+         Auto-granted when USE_EXACT_ALARM is declared. -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
 
     <application
         android:allowBackup="true"
@@ -24,7 +49,7 @@
         android:theme="@style/Theme.SleepWisePOC"
         android:usesCleartextTraffic="true">
 
-        <!-- Main Activity -->
+        <!-- ── Activities ──────────────────────────────────────────────────── -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -36,7 +61,6 @@
             </intent-filter>
         </activity>
 
-        <!-- Health Connect Permissions Rationale Activity -->
         <activity
             android:name=".PermissionsRationaleActivity"
             android:exported="true">
@@ -45,7 +69,6 @@
             </intent-filter>
         </activity>
 
-        <!-- Required for Android 14+ Health Connect -->
         <activity-alias
             android:name="ViewPermissionUsageActivity"
             android:exported="true"
@@ -56,6 +79,48 @@
                 <category android:name="android.intent.category.HEALTH_PERMISSIONS" />
             </intent-filter>
         </activity-alias>
+
+        <!-- ── Alarm ringing screen (shows over lock screen) ──────────────── -->
+        <activity
+            android:name=".alarm.AlarmRingingActivity"
+            android:exported="false"
+            android:showOnLockScreen="true"
+            android:turnScreenOn="true"
+            android:theme="@style/Theme.SleepWisePOC"
+            android:launchMode="singleTop"
+            android:excludeFromRecents="true" />
+
+        <!-- ── Smart Alarm BroadcastReceiver ───────────────────────────────── -->
+        <receiver
+            android:name=".alarm.AlarmReceiver"
+            android:exported="true">
+            <intent-filter>
+                <!-- AlarmManager callback -->
+                <action android:name="com.example.sleepwisepoc.ACTION_FIRE_ALARM" />
+                <!-- Restore alarms after reboot -->
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- ── Sleep Monitoring Foreground Service ──────────────────────────── -->
+        <!-- foregroundServiceType combines both types:
+             "dataSync"        — allows the service to start on emulators and devices
+                                 without an active watch connection (for testing / fallback).
+             "connectedDevice" — the semantic type when a Galaxy Watch is paired and streaming.
+             Both permission declarations are in the manifest above. -->
+        <service
+            android:name=".service.SleepMonitoringService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync|connectedDevice" />
+
+        <!-- ── Alarm Ring Foreground Service ────────────────────────────────── -->
+        <!-- Owns the MediaPlayer and vibration for the duration of the alarm.
+             Started by AlarmReceiver (fallback path) or SleepMonitoringService
+             (light-sleep path). Dismiss/Snooze are PendingIntents to this service. -->
+        <service
+            android:name=".alarm.AlarmRingService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
 
     </application>
 

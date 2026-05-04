@@ -2,6 +2,7 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.ksp)
     id("kotlin-parcelize")
 }
 
@@ -64,6 +65,17 @@ dependencies {
 
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+
+    // Material Icons Extended (Bedtime, Lightbulb, ChevronRight, etc.)
+    implementation("androidx.compose.material:material-icons-extended")
+
+    // ViewModel for Compose
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.6.1")
+
+    // Room — local sleep-session database
+    implementation(libs.androidx.room.runtime)
+    implementation(libs.androidx.room.ktx)
+    ksp(libs.androidx.room.compiler)
 
     // TensorFlow Lite for ML inference
     implementation("org.tensorflow:tensorflow-lite:2.16.1")
