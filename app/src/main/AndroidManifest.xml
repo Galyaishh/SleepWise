@@ -111,7 +111,7 @@
         <service
             android:name=".service.SleepMonitoringService"
             android:exported="false"
-            android:foregroundServiceType="dataSync|connectedDevice" />
+            android:foregroundServiceType="dataSync" />
 
         <!-- ── Alarm Ring Foreground Service ────────────────────────────────── -->
         <!-- Owns the MediaPlayer and vibration for the duration of the alarm.

@@ -1,0 +1,59 @@
+package com.example.sleepwisepoc.report
+
+import android.app.Application
+import android.provider.Settings
+import android.util.Log
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import com.example.sleepwisepoc.ApiClient
+import com.example.sleepwisepoc.WeeklyReport
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+
+sealed interface ReportUiState {
+    data object Loading : ReportUiState
+    data class Empty(val userId: String) : ReportUiState
+    data class Loaded(val report: WeeklyReport) : ReportUiState
+    data class Error(val message: String) : ReportUiState
+}
+
+class SleepReportViewModel(application: Application) : AndroidViewModel(application) {
+
+    private val _state = MutableStateFlow<ReportUiState>(ReportUiState.Loading)
+    val state: StateFlow<ReportUiState> = _state.asStateFlow()
+
+    init {
+        refresh()
+    }
+
+    fun refresh() {
+        _state.update { ReportUiState.Loading }
+        viewModelScope.launch {
+            try {
+                val userId = userId()
+                Log.d(TAG, "fetching weekly for user_id=$userId")
+                val report = ApiClient.api.weeklyReport(userId)
+                _state.update {
+                    if (report.sessions.isEmpty()) ReportUiState.Empty(userId)
+                    else ReportUiState.Loaded(report)
+                }
+            } catch (t: Throwable) {
+                Log.w(TAG, "fetch failed: ${t.message}")
+                _state.update { ReportUiState.Error(t.message ?: "Could not reach the server") }
+            }
+        }
+    }
+
+    @SuppressWarnings("HardwareIds")
+    private fun userId(): String = Settings.Secure.getString(
+        getApplication<Application>().contentResolver,
+        Settings.Secure.ANDROID_ID,
+    ) ?: "unknown"
+
+    companion object {
+        private const val TAG = "SleepReportVM"
+    }
+}

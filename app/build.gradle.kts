@@ -72,6 +72,9 @@ dependencies {
     // ViewModel for Compose
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.6.1")
 
+    // DataStore — persistent storage for the smart-alarm window
+    implementation("androidx.datastore:datastore-preferences:1.1.1")
+
     // Room — local sleep-session database
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)
