@@ -16,6 +16,9 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Alarm
+import androidx.compose.material.icons.outlined.Bedtime
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -65,38 +68,47 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             SleepWisePOCTheme {
-                // Navigation state: null = SmartAlarm, "poc" = POC debug, "demo" = full demo
-                var screen by remember { mutableStateOf("alarm") }
+                // subScreen: null = bottom-nav tabs visible, "poc" / "demo" = full-screen sub-screens
+                var subScreen   by remember { mutableStateOf<String?>(null) }
+                var selectedTab by remember { mutableIntStateOf(0) }
                 val alarmViewModel: AlarmViewModel = viewModel()
 
-                Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    when (screen) {
+                Scaffold(
+                    modifier  = Modifier.fillMaxSize(),
+                    bottomBar = {
+                        if (subScreen == null) {
+                            SleepWiseNavBar(
+                                selectedTab   = selectedTab,
+                                onTabSelected = { selectedTab = it },
+                            )
+                        }
+                    },
+                ) { innerPadding ->
+                    when (subScreen) {
                         "demo" -> DemoScreen(
                             context   = this,
                             predictor = if (tfliteInitialized) tfLitePredictor else null,
-                            onBack    = { screen = "poc" },
+                            onBack    = { subScreen = "poc" },
                         )
-
-                        "poc" -> SleepWisePOCApp(
-                            modifier              = Modifier.padding(innerPadding),
-                            activity              = this,
-                            samsungHealthManager  = if (sdkInitialized) samsungHealthManager else null,
-                            tfLitePredictor       = if (tfliteInitialized) tfLitePredictor else null,
-                            onStartDemo           = { screen = "demo" },
-                            onBack                = { screen = "alarm" },
+                        "poc"  -> SleepWisePOCApp(
+                            modifier             = Modifier.padding(innerPadding),
+                            activity             = this,
+                            samsungHealthManager = if (sdkInitialized) samsungHealthManager else null,
+                            tfLitePredictor      = if (tfliteInitialized) tfLitePredictor else null,
+                            onStartDemo          = { subScreen = "demo" },
+                            onBack               = { subScreen = null },
                         )
-
-                        "report" -> SleepReportScreen(
-                            modifier = Modifier.padding(innerPadding),
-                            onBack   = { screen = "alarm" },
-                        )
-
-                        else -> SmartAlarmScreen(
-                            modifier  = Modifier.padding(innerPadding),
-                            viewModel = alarmViewModel,
-                            onDevMode = { screen = "poc" },
-                            onHistory = { screen = "report" },
-                        )
+                        else   -> when (selectedTab) {
+                            1    -> SleepReportScreen(
+                                modifier = Modifier.padding(innerPadding),
+                            )
+                            else -> SmartAlarmScreen(
+                                modifier  = Modifier.padding(innerPadding),
+                                viewModel = alarmViewModel,
+                                onDevMode = { subScreen = "poc" },
+                                onHistory = { selectedTab = 1 },
+                            )
+                        }
                     }
                 }
             }
@@ -106,6 +118,31 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         super.onDestroy()
         tfLitePredictor?.close()
+    }
+}
+
+// ─── Bottom navigation bar ────────────────────────────────────────────────────
+
+@Composable
+private fun SleepWiseNavBar(selectedTab: Int, onTabSelected: (Int) -> Unit) {
+    NavigationBar(
+        containerColor = MaterialTheme.colorScheme.surface,
+        tonalElevation = 0.dp,
+    ) {
+        NavigationBarItem(
+            selected      = selectedTab == 0,
+            onClick       = { onTabSelected(0) },
+            icon          = { Icon(Icons.Outlined.Alarm, contentDescription = "Alarm") },
+            label         = { Text("Alarm") },
+            alwaysShowLabel = true,
+        )
+        NavigationBarItem(
+            selected      = selectedTab == 1,
+            onClick       = { onTabSelected(1) },
+            icon          = { Icon(Icons.Outlined.Bedtime, contentDescription = "Sleep") },
+            label         = { Text("Sleep") },
+            alwaysShowLabel = true,
+        )
     }
 }
 

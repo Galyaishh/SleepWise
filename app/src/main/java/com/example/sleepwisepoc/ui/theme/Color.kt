@@ -51,6 +51,20 @@ val SleepDarkTextSecondary      = Color(0xFF8B8FA8)
 val SleepDarkInsightBg          = Color(0xFF1E2240)
 val SleepDarkInsightText        = Color(0xFFA8AACC)
 
+// ─── Sleep Stage Colors ───────────────────────────────────────────────────────
+
+// Light mode
+val SleepStageDeep  = Color(0xFF5B6FD6)   // rich indigo — deepest sleep
+val SleepStageLight = Color(0xFF4A9EC4)   // sky blue — light NREM
+val SleepStageREM   = Color(0xFF9375C4)   // soft violet — REM
+val SleepStageWake  = Color(0xFFD4924A)   // warm amber — awake
+
+// Dark mode (slightly lighter / more vivid for contrast on dark backgrounds)
+val SleepStageDeepDark  = Color(0xFF7B8FE8)
+val SleepStageLightDark = Color(0xFF68BDE0)
+val SleepStageREMDark   = Color(0xFFB09ADE)
+val SleepStageWakeDark  = Color(0xFFE8B06A)
+
 // ─── Legacy (kept for backward compatibility with existing POC screens) ────────
 val Purple80    = Color(0xFFD0BCFF)
 val PurpleGrey80 = Color(0xFFCCC2DC)

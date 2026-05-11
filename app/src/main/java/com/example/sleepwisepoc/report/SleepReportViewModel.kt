@@ -16,7 +16,7 @@ import kotlinx.coroutines.launch
 sealed interface ReportUiState {
     data object Loading : ReportUiState
     data class Empty(val userId: String) : ReportUiState
-    data class Loaded(val report: WeeklyReport) : ReportUiState
+    data class Loaded(val report: WeeklyReport, val isDemoData: Boolean = false) : ReportUiState
     data class Error(val message: String) : ReportUiState
 }
 
@@ -41,8 +41,8 @@ class SleepReportViewModel(application: Application) : AndroidViewModel(applicat
                     else ReportUiState.Loaded(report)
                 }
             } catch (t: Throwable) {
-                Log.w(TAG, "fetch failed: ${t.message}")
-                _state.update { ReportUiState.Error(t.message ?: "Could not reach the server") }
+                Log.w(TAG, "fetch failed: ${t.message} — falling back to demo data")
+                _state.update { ReportUiState.Loaded(SleepMockData.createReport(), isDemoData = true) }
             }
         }
     }
