@@ -1,5 +1,6 @@
 package com.example.sleepwisepoc
 
+import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
@@ -59,11 +60,19 @@ data class HealthCheckResponse(
     val sessions_stored: Int,
 )
 
+data class DeviceRegisterResponse(
+    val user_id: String,
+    val token: String,
+)
+
 // ─── API surface ─────────────────────────────────────────────────────────────
 
 interface SleepWiseApi {
     @GET("/")
     suspend fun health(): HealthCheckResponse
+
+    @POST("/devices/register")
+    suspend fun registerDevice(): DeviceRegisterResponse
 
     @POST("/sessions")
     suspend fun uploadSession(@Body session: SessionUpload): SessionRecord
@@ -81,23 +90,39 @@ interface SleepWiseApi {
 // ─── Client ──────────────────────────────────────────────────────────────────
 
 object ApiClient {
-    /**
-     * 10.0.2.2 is the Android emulator's loopback to the host machine.
-     * For physical devices, override via [withBaseUrl] using the host LAN IP.
-     */
     const val EMULATOR_BASE_URL = "http://10.0.2.2:5000/"
+    const val PROD_BASE_URL = "https://sleepwise-backend-production-2cea.up.railway.app/"
+
+    @Volatile private var _authToken: String? = null
+
+    private val authInterceptor = Interceptor { chain ->
+        val t = _authToken
+        val req = if (t != null) {
+            chain.request().newBuilder()
+                .header("Authorization", "Bearer $t")
+                .build()
+        } else {
+            chain.request()
+        }
+        chain.proceed(req)
+    }
 
     private val loggingInterceptor = HttpLoggingInterceptor().apply {
         level = HttpLoggingInterceptor.Level.BASIC
     }
 
     private val httpClient = OkHttpClient.Builder()
+        .addInterceptor(authInterceptor)
         .addInterceptor(loggingInterceptor)
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(20, TimeUnit.SECONDS)
         .build()
 
-    val api: SleepWiseApi = withBaseUrl(EMULATOR_BASE_URL)
+    val api: SleepWiseApi = withBaseUrl(PROD_BASE_URL)
+
+    fun setAuthToken(token: String) {
+        _authToken = token
+    }
 
     fun withBaseUrl(baseUrl: String): SleepWiseApi = Retrofit.Builder()
         .baseUrl(baseUrl)

@@ -8,11 +8,12 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
-import android.provider.Settings
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.example.sleepwisepoc.ApiClient
+import com.example.sleepwisepoc.DeviceStore
 import com.example.sleepwisepoc.MainActivity
+import com.example.sleepwisepoc.SamsungHealthManager
 import com.example.sleepwisepoc.SessionUpload
 import com.example.sleepwisepoc.StageTick
 import com.example.sleepwisepoc.TFLiteSleepPredictor
@@ -50,6 +51,7 @@ class SleepMonitoringService : Service() {
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
     private var loop: Job? = null
     private var predictor: TFLiteSleepPredictor? = null
+    private var healthManager: SamsungHealthManager? = null
     private var alarmFired = false
 
     private val tickHistory = mutableListOf<StageTick>()
@@ -75,6 +77,10 @@ class SleepMonitoringService : Service() {
         predictor = TFLiteSleepPredictor(this).also {
             val ok = it.initialize()
             Log.d(TAG, "TFLite predictor initialized=$ok")
+        }
+        healthManager = SamsungHealthManager(this).also {
+            val ok = it.initialize()
+            Log.d(TAG, "SamsungHealthManager initialized=$ok")
         }
     }
 
@@ -134,11 +140,7 @@ class SleepMonitoringService : Service() {
 
             // Build & feed an epoch into the predictor
             val pred = predictor?.let { p ->
-                val epoch = p.createMockEpoch(
-                    scenario = "light", // emulator demo: feed Light to demonstrate detection
-                    epochIndex = epochIndex,
-                    totalEpochs = totalEpochs,
-                )
+                val epoch = acquireEpoch(p, epochIndex, totalEpochs)
                 p.addEpoch(epoch)
                 if (p.canPredict()) p.predict() else null
             }
@@ -190,6 +192,41 @@ class SleepMonitoringService : Service() {
         super.onDestroy()
     }
 
+    // ─── Epoch acquisition ────────────────────────────────────────────────────
+
+    /**
+     * Returns the best available epoch for the current tick.
+     *
+     * Priority:
+     *   1. Real HR data from Samsung Health (last 1 h, latest complete epoch)
+     *      — requires Samsung Health app + permissions + watch connected
+     *   2. Mock epoch — guaranteed fallback so the alarm always works
+     */
+    private suspend fun acquireEpoch(
+        predictor: TFLiteSleepPredictor,
+        epochIndex: Int,
+        totalEpochs: Int,
+    ): TFLiteSleepPredictor.EpochFeatures {
+        val manager = healthManager
+        if (manager != null) {
+            try {
+                val epochs = manager.processDataIntoEpochs(hoursBack = 1)
+                val latest = epochs.lastOrNull()
+                if (latest != null && latest.hrSampleCount >= MIN_HR_SAMPLES) {
+                    Log.d(TAG, "acquireEpoch: real data — HR=${latest.hrMean.toInt()} bpm " +
+                            "(${latest.hrSampleCount} samples @ ${latest.timeString})")
+                    return manager.epochToFeatures(latest)
+                }
+                Log.d(TAG, "acquireEpoch: real data insufficient " +
+                        "(${latest?.hrSampleCount ?: 0} samples) → mock")
+            } catch (e: Exception) {
+                Log.w(TAG, "acquireEpoch: health read failed (${e.message}) → mock")
+            }
+        }
+        Log.d(TAG, "acquireEpoch: using mock epoch #$epochIndex")
+        return predictor.createMockEpoch("light", epochIndex, totalEpochs)
+    }
+
     // ─── Upload ───────────────────────────────────────────────────────────────
 
     private suspend fun uploadSession(firedReason: String, firedAt: Instant) {
@@ -200,7 +237,7 @@ class SleepMonitoringService : Service() {
         val today = LocalDate.now()
 
         val payload = SessionUpload(
-            user_id = userId(),
+            user_id = DeviceStore(this).load()?.first ?: "unknown",
             window_start = today.atTime(winStart).atZone(zone).toInstant().toString(),
             window_end = today.atTime(winEnd).atZone(zone).toInstant().toString(),
             started_at = started.toString(),
@@ -217,11 +254,6 @@ class SleepMonitoringService : Service() {
             Log.w(TAG, "session upload failed: ${t.message}")
         }
     }
-
-    @SuppressWarnings("HardwareIds")
-    private fun userId(): String = Settings.Secure.getString(
-        contentResolver, Settings.Secure.ANDROID_ID,
-    ) ?: "unknown"
 
     // ─── Notification plumbing ────────────────────────────────────────────────
 
@@ -272,6 +304,7 @@ class SleepMonitoringService : Service() {
         private const val EXTRA_END_MIN = "extra_end_min"
         private const val TICK_SEC_REAL = 60L
         private const val TICK_SEC_DEMO = 3L
+        private const val MIN_HR_SAMPLES = 3   // minimum HR samples in an epoch to trust it
 
         fun start(context: Context, start: LocalTime, end: LocalTime) {
             val intent = Intent(context, SleepMonitoringService::class.java).apply {

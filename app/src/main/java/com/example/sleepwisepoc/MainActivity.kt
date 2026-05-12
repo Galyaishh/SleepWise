@@ -28,6 +28,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.sleepwisepoc.alarm.AlarmViewModel
 import com.example.sleepwisepoc.alarm.SmartAlarmScreen
@@ -53,6 +54,11 @@ class MainActivity : ComponentActivity() {
         val tfliteInitialized = tfLitePredictor?.initialize() ?: false
 
         Log.d("MainActivity", "Samsung Health SDK: $sdkInitialized, TFLite: $tfliteInitialized")
+
+        // Register this device with the backend and restore the auth token.
+        lifecycleScope.launch(Dispatchers.IO) {
+            DeviceRepository.ensureRegistered(applicationContext)
+        }
 
         // POST_NOTIFICATIONS is required on Android 13+ for alarm notifications to appear.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {

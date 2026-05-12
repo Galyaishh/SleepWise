@@ -1,11 +1,11 @@
 package com.example.sleepwisepoc.report
 
 import android.app.Application
-import android.provider.Settings
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.sleepwisepoc.ApiClient
+import com.example.sleepwisepoc.DeviceStore
 import com.example.sleepwisepoc.WeeklyReport
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -33,7 +33,12 @@ class SleepReportViewModel(application: Application) : AndroidViewModel(applicat
         _state.update { ReportUiState.Loading }
         viewModelScope.launch {
             try {
-                val userId = userId()
+                val userId = DeviceStore(getApplication()).load()?.first
+                if (userId == null) {
+                    Log.w(TAG, "no device registered yet — showing demo data")
+                    _state.update { ReportUiState.Loaded(SleepMockData.createReport(), isDemoData = true) }
+                    return@launch
+                }
                 Log.d(TAG, "fetching weekly for user_id=$userId")
                 val report = ApiClient.api.weeklyReport(userId)
                 _state.update {
@@ -46,12 +51,6 @@ class SleepReportViewModel(application: Application) : AndroidViewModel(applicat
             }
         }
     }
-
-    @SuppressWarnings("HardwareIds")
-    private fun userId(): String = Settings.Secure.getString(
-        getApplication<Application>().contentResolver,
-        Settings.Secure.ANDROID_ID,
-    ) ?: "unknown"
 
     companion object {
         private const val TAG = "SleepReportVM"
