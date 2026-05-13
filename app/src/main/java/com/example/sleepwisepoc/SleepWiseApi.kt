@@ -91,7 +91,7 @@ interface SleepWiseApi {
 
 object ApiClient {
     const val EMULATOR_BASE_URL = "http://10.0.2.2:5000/"
-    const val PROD_BASE_URL = "https://sleepwise-backend-production-2cea.up.railway.app/"
+    const val PROD_BASE_URL = "https://sleepwise-backend-8kvx.onrender.com/"
 
     @Volatile private var _authToken: String? = null
 
