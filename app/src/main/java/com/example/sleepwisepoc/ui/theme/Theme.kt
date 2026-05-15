@@ -34,26 +34,27 @@ private val SleepWiseLightColorScheme = lightColorScheme(
 )
 
 private val SleepWiseDarkColorScheme = darkColorScheme(
-    primary              = SleepDarkPrimary,
-    onPrimary            = SleepDarkOnPrimary,
-    primaryContainer     = SleepDarkPrimaryContainer,
-    onPrimaryContainer   = SleepDarkPrimary,
-    secondary            = SleepSecondary,
-    onSecondary          = SleepDarkOnPrimary,
-    secondaryContainer   = SleepDarkInsightBg,
-    onSecondaryContainer = SleepDarkInsightText,
-    background           = SleepDarkBackground,
-    onBackground         = SleepDarkOnBackground,
-    surface              = SleepDarkSurface,
-    onSurface            = SleepDarkOnBackground,
-    surfaceVariant       = SleepDarkSurfaceVariant,
-    onSurfaceVariant     = SleepDarkTextSecondary,
+    primary              = NightPrimary,
+    onPrimary            = NightTextPrimary,
+    primaryContainer     = NightSurface2,
+    onPrimaryContainer   = NightTextAccent,
+    secondary            = NightPrimaryEnd,
+    onSecondary          = NightTextPrimary,
+    secondaryContainer   = NightSurface2,
+    onSecondaryContainer = NightTextAccent,
+    background           = NightBg,
+    onBackground         = NightTextPrimary,
+    surface              = NightSurface,
+    onSurface            = NightTextPrimary,
+    surfaceVariant       = NightSurface2,
+    onSurfaceVariant     = NightTextSecondary,
+    outline              = NightBorder,
     error                = SleepError,
 )
 
 @Composable
 fun SleepWisePOCTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
+    darkTheme: Boolean = true,
     // Dynamic color disabled — we use our own sleep-friendly palette
     dynamicColor: Boolean = false,
     content: @Composable () -> Unit

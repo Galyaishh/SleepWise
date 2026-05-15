@@ -111,6 +111,7 @@ class SleepMonitoringService : Service() {
                 Build.MODEL.contains("sdk", ignoreCase = true)
         val tickMs = (if (isEmulator) TICK_SEC_DEMO else TICK_SEC_REAL) * 1000L
         Log.d(TAG, "loop tick=${tickMs}ms isEmulator=$isEmulator")
+        if (isEmulator) healthManager = null  // Samsung Health not present on emulator
 
         val today = LocalDate.now()
         val zone = ZoneId.systemDefault()
@@ -303,7 +304,7 @@ class SleepMonitoringService : Service() {
         private const val EXTRA_START_MIN = "extra_start_min"
         private const val EXTRA_END_MIN = "extra_end_min"
         private const val TICK_SEC_REAL = 60L
-        private const val TICK_SEC_DEMO = 3L
+        private const val TICK_SEC_DEMO = 10L
         private const val MIN_HR_SAMPLES = 3   // minimum HR samples in an epoch to trust it
 
         fun start(context: Context, start: LocalTime, end: LocalTime) {

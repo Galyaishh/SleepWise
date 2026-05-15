@@ -65,6 +65,20 @@ val SleepStageLightDark = Color(0xFF68BDE0)
 val SleepStageREMDark   = Color(0xFFB09ADE)
 val SleepStageWakeDark  = Color(0xFFE8B06A)
 
+// ─── Night palette — Tonight screen & global dark theme ──────────────────────
+
+val NightBg            = Color(0xFF0A0C18)
+val NightSurface       = Color(0xFF141829)
+val NightSurface2      = Color(0xFF1C2242)
+val NightBorder        = Color(0xFF252B4A)
+val NightPrimary       = Color(0xFF7B6FE8)
+val NightPrimaryEnd    = Color(0xFF4A8FD4)
+val NightTextPrimary   = Color(0xFFFFFFFF)
+val NightTextSecondary = Color(0xFF7B82A4)
+val NightTextAccent    = Color(0xFF9DA8E8)
+val NightSuccess       = Color(0xFF4ADE80)
+val NightWarning       = Color(0xFFFBBF24)
+
 // ─── Legacy (kept for backward compatibility with existing POC screens) ────────
 val Purple80    = Color(0xFFD0BCFF)
 val PurpleGrey80 = Color(0xFFCCC2DC)

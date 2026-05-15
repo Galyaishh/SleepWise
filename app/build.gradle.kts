@@ -82,7 +82,8 @@ dependencies {
 
     // TensorFlow Lite for ML inference
     implementation("org.tensorflow:tensorflow-lite:2.16.1")
-    implementation("org.tensorflow:tensorflow-lite-select-tf-ops:2.16.1")  // Required for LSTM ops
+    // select-tf-ops (LSTM/custom ops, ~300MB) only in release — keeps debug APK small
+    releaseImplementation("org.tensorflow:tensorflow-lite-select-tf-ops:2.16.1")
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
