@@ -34,6 +34,9 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import com.example.sleepwisepoc.ui.theme.NightBg
 import com.example.sleepwisepoc.ui.theme.NightBorder
 import com.example.sleepwisepoc.ui.theme.NightPrimary
@@ -43,9 +46,16 @@ import com.example.sleepwisepoc.ui.theme.NightSurface2
 import com.example.sleepwisepoc.ui.theme.NightTextAccent
 import com.example.sleepwisepoc.ui.theme.NightTextPrimary
 import com.example.sleepwisepoc.ui.theme.NightTextSecondary
+import com.google.firebase.auth.FirebaseAuth
 
 @Composable
 fun ProfileScreen(modifier: Modifier = Modifier) {
+    // Resolved once on composition — Firebase user info doesn't change while the screen is shown.
+    val user = remember { FirebaseAuth.getInstance().currentUser }
+    val displayName = user?.displayName?.trim()?.takeIf { it.isNotBlank() }
+    val email = user?.email?.takeIf { it.isNotBlank() }
+    val avatarLetter = (displayName ?: email)?.firstOrNull()?.uppercase()?.first()?.toString() ?: "?"
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -61,6 +71,46 @@ fun ProfileScreen(modifier: Modifier = Modifier) {
         }
 
         Spacer(Modifier.height(24.dp))
+
+        // User identity card
+        ProfileCard {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(56.dp)
+                        .clip(CircleShape)
+                        .background(NightPrimary),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = avatarLetter,
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = NightTextPrimary,
+                    )
+                }
+                Spacer(Modifier.width(16.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = displayName ?: "Signed in",
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = NightTextPrimary,
+                    )
+                    if (email != null) {
+                        Spacer(Modifier.height(2.dp))
+                        Text(text = email, fontSize = 13.sp, color = NightTextSecondary)
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
 
         // My Devices
         SectionLabel("MY DEVICES")

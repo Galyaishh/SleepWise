@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.sleepwisepoc.schedule.DaySchedule
 import com.example.sleepwisepoc.schedule.SleepScheduleStore
 import com.example.sleepwisepoc.service.SleepMonitoringService
+import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.combine
@@ -48,10 +49,19 @@ class TonightViewModel(application: Application) : AndroidViewModel(application)
         _isTracking.update { false }
     }
 
-    private fun greeting(): String = when (LocalTime.now().hour) {
-        in 5..11  -> "Good morning"
-        in 12..16 -> "Good afternoon"
-        in 17..20 -> "Good evening"
-        else      -> "Good night"
+    private fun greeting(): String {
+        val timeOfDay = when (LocalTime.now().hour) {
+            in 5..11  -> "Good morning"
+            in 12..16 -> "Good afternoon"
+            in 17..20 -> "Good evening"
+            else      -> "Good night"
+        }
+        val firstName = FirebaseAuth.getInstance().currentUser
+            ?.displayName
+            ?.trim()
+            ?.split(" ")
+            ?.firstOrNull()
+            ?.takeIf { it.isNotBlank() }
+        return if (firstName != null) "$timeOfDay, $firstName" else timeOfDay
     }
 }
