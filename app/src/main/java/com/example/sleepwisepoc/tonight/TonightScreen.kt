@@ -1,6 +1,9 @@
 package com.example.sleepwisepoc.tonight
 
+import android.content.Context
 import android.content.Intent
+import android.net.Uri
+import android.os.PowerManager
 import android.provider.Settings
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -72,6 +75,20 @@ import com.example.sleepwisepoc.ui.theme.NightTextSecondary
 import java.time.format.DateTimeFormatter
 
 private val TimeFmt = DateTimeFormatter.ofPattern("hh:mm a")
+
+private fun requestBatteryOptimizationExemption(context: Context) {
+    val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager ?: return
+    if (pm.isIgnoringBatteryOptimizations(context.packageName)) return
+    try {
+        val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+            data = Uri.parse("package:${context.packageName}")
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(intent)
+    } catch (_: Throwable) {
+        // Some OEMs hide the system intent; user will need to whitelist manually.
+    }
+}
 
 @Composable
 fun TonightScreen(
@@ -170,7 +187,10 @@ fun TonightScreen(
                     watchMissing = watchMissing,
                     onStart = {
                         if (watchMissing) showNoWatchDialog = true
-                        else viewModel.startTracking()
+                        else {
+                            requestBatteryOptimizationExemption(context)
+                            viewModel.startTracking()
+                        }
                     },
                     onStop = viewModel::stopTracking,
                 )
@@ -205,6 +225,7 @@ fun TonightScreen(
                         },
                         onStartAlarmOnly = {
                             showNoWatchDialog = false
+                            requestBatteryOptimizationExemption(context)
                             viewModel.startTrackingAlarmOnly()
                         },
                     )
@@ -266,21 +287,18 @@ private fun NoWatchSheet(
             modifier = Modifier.size(120.dp),
             contentAlignment = Alignment.Center,
         ) {
-            // Outer pulsing glow
             Box(
                 modifier = Modifier
                     .size(112.dp)
                     .clip(CircleShape)
                     .background(NightPrimary.copy(alpha = glowAlpha)),
             )
-            // Mid ring
             Box(
                 modifier = Modifier
                     .size(86.dp)
                     .clip(CircleShape)
                     .background(NightPrimary.copy(alpha = 0.18f)),
             )
-            // Icon circle
             Box(
                 modifier = Modifier
                     .size(68.dp)
@@ -295,7 +313,6 @@ private fun NoWatchSheet(
                     modifier = Modifier.size(34.dp),
                 )
             }
-            // X badge
             Box(
                 modifier = Modifier
                     .size(26.dp)

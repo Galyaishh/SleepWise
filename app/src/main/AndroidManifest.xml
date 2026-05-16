@@ -28,6 +28,10 @@
     <uses-permission android:name="android.permission.VIBRATE" />
     <!-- Re-schedule alarms after device reboot -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Battery-optimization whitelist — required for the overnight foreground
+         service to survive Doze on stock Android. Samsung's "Never sleeping
+         apps" is a separate, vendor-specific layer the user still has to add. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- Foreground service for overnight monitoring -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <!-- Foreground service types -->
