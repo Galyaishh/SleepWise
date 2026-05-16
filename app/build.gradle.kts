@@ -4,6 +4,7 @@ plugins {
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.ksp)
     id("kotlin-parcelize")
+    id("com.google.gms.google-services")
 }
 
 android {
@@ -65,6 +66,8 @@ dependencies {
 
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+    // Coroutines-Tasks bridge — so we can .await() Firebase Tasks
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.7.3")
 
     // Material Icons Extended (Bedtime, Lightbulb, ChevronRight, etc.)
     implementation("androidx.compose.material:material-icons-extended")
@@ -84,6 +87,15 @@ dependencies {
     implementation("org.tensorflow:tensorflow-lite:2.16.1")
     // select-tf-ops (LSTM/custom ops, ~300MB) only in release — keeps debug APK small
     releaseImplementation("org.tensorflow:tensorflow-lite-select-tf-ops:2.16.1")
+
+    // Firebase — auth only (FastAPI handles all domain data)
+    // BoM pinned to 33.x: Kotlin 2.0.x compatibility (34.x requires Kotlin 2.3+)
+    implementation(platform("com.google.firebase:firebase-bom:33.7.0"))
+    implementation("com.google.firebase:firebase-auth")
+    // Credential Manager (modern replacement for the old Google Sign-In SDK)
+    implementation("androidx.credentials:credentials:1.3.0")
+    implementation("androidx.credentials:credentials-play-services-auth:1.3.0")
+    implementation("com.google.android.libraries.identity.googleid:googleid:1.1.1")
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

@@ -4,6 +4,7 @@
 
     <!-- ── Network ──────────────────────────────────────────────────────────── -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <!-- ── Health Connect ───────────────────────────────────────────────────── -->
     <uses-permission android:name="android.permission.health.READ_HEART_RATE" />

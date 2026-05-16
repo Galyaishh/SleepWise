@@ -64,7 +64,11 @@ class MainActivity : ComponentActivity() {
             // Samsung Health SDK crashes system_server on emulator (no Samsung Health service)
             if (!isEmulator) {
                 samsungHealthManager = SamsungHealthManager(this@MainActivity)
-                samsungHealthManager?.initialize()
+                val sdkOk = samsungHealthManager?.initialize() == true
+                if (sdkOk) {
+                    val granted = samsungHealthManager?.checkAndRequestPermissions(this@MainActivity) == true
+                    Log.d("MainActivity", "Samsung Health permissions granted=$granted")
+                }
             }
             tfLitePredictor = TFLiteSleepPredictor(this@MainActivity)
             val tfliteInitialized = tfLitePredictor?.initialize() ?: false

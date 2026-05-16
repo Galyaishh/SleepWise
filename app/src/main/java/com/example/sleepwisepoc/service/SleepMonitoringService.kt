@@ -11,9 +11,9 @@ import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.example.sleepwisepoc.ApiClient
-import com.example.sleepwisepoc.DeviceStore
 import com.example.sleepwisepoc.MainActivity
 import com.example.sleepwisepoc.SamsungHealthManager
+import com.google.firebase.auth.FirebaseAuth
 import com.example.sleepwisepoc.SessionUpload
 import com.example.sleepwisepoc.StageTick
 import com.example.sleepwisepoc.TFLiteSleepPredictor
@@ -238,7 +238,7 @@ class SleepMonitoringService : Service() {
         val today = LocalDate.now()
 
         val payload = SessionUpload(
-            user_id = DeviceStore(this).load()?.first ?: "unknown",
+            user_id = FirebaseAuth.getInstance().currentUser?.uid ?: "unknown",
             window_start = today.atTime(winStart).atZone(zone).toInstant().toString(),
             window_end = today.atTime(winEnd).atZone(zone).toInstant().toString(),
             started_at = started.toString(),

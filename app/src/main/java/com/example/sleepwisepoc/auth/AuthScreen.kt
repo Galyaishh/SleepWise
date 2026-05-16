@@ -1,5 +1,9 @@
 package com.example.sleepwisepoc.auth
 
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.util.Log
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -26,6 +30,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -33,6 +38,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -41,7 +47,11 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.credentials.CredentialManager
+import androidx.credentials.CustomCredential
+import androidx.credentials.GetCredentialRequest
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.sleepwisepoc.R
 import com.example.sleepwisepoc.ui.theme.NightBg
 import com.example.sleepwisepoc.ui.theme.NightBorder
 import com.example.sleepwisepoc.ui.theme.NightPrimary
@@ -50,6 +60,9 @@ import com.example.sleepwisepoc.ui.theme.NightSurface
 import com.example.sleepwisepoc.ui.theme.NightSurface2
 import com.example.sleepwisepoc.ui.theme.NightTextPrimary
 import com.example.sleepwisepoc.ui.theme.NightTextSecondary
+import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
+import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
+import kotlinx.coroutines.launch
 
 @Composable
 fun AuthScreen(viewModel: AuthViewModel = viewModel()) {
@@ -58,6 +71,52 @@ fun AuthScreen(viewModel: AuthViewModel = viewModel()) {
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     val focusManager = LocalFocusManager.current
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    val credentialManager = remember(context) { CredentialManager.create(context) }
+
+    val onGoogleClick: () -> Unit = {
+        if (!hasInternet(context)) {
+            viewModel.setError("No internet connection. Connect to Wi-Fi or mobile data and try again.")
+        } else {
+            viewModel.clearError()
+            coroutineScope.launch {
+                try {
+                    // GetSignInWithGoogleOption is the explicit "button click" entry point —
+                    // always shows the account chooser, doesn't depend on prior authorization.
+                    val option = GetSignInWithGoogleOption.Builder(
+                        context.getString(R.string.default_web_client_id)
+                    ).build()
+                    val request = GetCredentialRequest.Builder()
+                        .addCredentialOption(option)
+                        .build()
+                    val response = credentialManager.getCredential(context, request)
+                    val credential = response.credential
+                    if (credential is CustomCredential &&
+                        credential.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL
+                    ) {
+                        val googleCred = GoogleIdTokenCredential.createFrom(credential.data)
+                        viewModel.completeGoogleSignIn(googleCred.idToken)
+                    } else {
+                        viewModel.setError("Unexpected credential type from Google.")
+                    }
+                } catch (t: Throwable) {
+                    Log.w("AuthScreen", "credential manager error: ${t.message}", t)
+                    val msg = t.message.orEmpty()
+                    val friendly = when {
+                        "reauth" in msg.lowercase() ->
+                            "Google account needs to re-sign-in. Check your internet, or remove + re-add the account in phone Settings."
+                        "no credentials" in msg.lowercase() ->
+                            "No Google account available on this device."
+                        "cancel" in msg.lowercase() ->
+                            "Sign-in cancelled."
+                        else -> "Google sign-in failed: $msg"
+                    }
+                    viewModel.setError(friendly)
+                }
+            }
+        }
+    }
 
     Box(
         modifier = Modifier
@@ -105,7 +164,7 @@ fun AuthScreen(viewModel: AuthViewModel = viewModel()) {
             } else if (!showEmailForm) {
                 // Google button
                 AuthButton(
-                    onClick = viewModel::signInWithGoogle,
+                    onClick = onGoogleClick,
                     isPrimary = true,
                 ) {
                     Row(
@@ -202,6 +261,23 @@ fun AuthScreen(viewModel: AuthViewModel = viewModel()) {
                 }
             }
 
+            state.error?.let { errorText ->
+                Spacer(Modifier.height(20.dp))
+                Text(
+                    text = errorText,
+                    fontSize = 13.sp,
+                    color = Color(0xFFFF6B6B),
+                    textAlign = TextAlign.Center,
+                    lineHeight = 18.sp,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color(0xFFFF6B6B).copy(alpha = 0.1f))
+                        .border(1.dp, Color(0xFFFF6B6B).copy(alpha = 0.4f), RoundedCornerShape(12.dp))
+                        .padding(12.dp),
+                )
+            }
+
             Spacer(Modifier.height(40.dp))
 
             Text(
@@ -215,6 +291,14 @@ fun AuthScreen(viewModel: AuthViewModel = viewModel()) {
             Spacer(Modifier.height(32.dp))
         }
     }
+}
+
+private fun hasInternet(context: Context): Boolean {
+    val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return true
+    val network = cm.activeNetwork ?: return false
+    val caps = cm.getNetworkCapabilities(network) ?: return false
+    return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+            caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
 }
 
 @Composable

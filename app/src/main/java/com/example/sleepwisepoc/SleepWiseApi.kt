@@ -1,5 +1,9 @@
 package com.example.sleepwisepoc
 
+import android.util.Log
+import com.google.firebase.auth.FirebaseAuth
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.tasks.await
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
@@ -60,19 +64,14 @@ data class HealthCheckResponse(
     val sessions_stored: Int,
 )
 
-data class DeviceRegisterResponse(
-    val user_id: String,
-    val token: String,
-)
-
 // ─── API surface ─────────────────────────────────────────────────────────────
 
 interface SleepWiseApi {
     @GET("/")
     suspend fun health(): HealthCheckResponse
 
-    @POST("/devices/register")
-    suspend fun registerDevice(): DeviceRegisterResponse
+    @GET("/me")
+    suspend fun whoami(): Map<String, String>
 
     @POST("/sessions")
     suspend fun uploadSession(@Body session: SessionUpload): SessionRecord
@@ -93,13 +92,22 @@ object ApiClient {
     const val EMULATOR_BASE_URL = "http://10.0.2.2:5000/"
     const val PROD_BASE_URL = "https://sleepwise-backend-8kvx.onrender.com/"
 
-    @Volatile private var _authToken: String? = null
-
+    /**
+     * Pulls a fresh Firebase ID token before every request. Firebase caches
+     * the token for ~1h; .getIdToken(false) returns cached if still valid,
+     * otherwise refreshes — so this is cheap on the hot path.
+     */
     private val authInterceptor = Interceptor { chain ->
-        val t = _authToken
-        val req = if (t != null) {
+        val user = FirebaseAuth.getInstance().currentUser
+        val token: String? = user?.let {
+            runCatching {
+                runBlocking { it.getIdToken(false).await().token }
+            }.onFailure { Log.w(TAG, "Firebase ID token fetch failed: ${it.message}") }
+                .getOrNull()
+        }
+        val req = if (token != null) {
             chain.request().newBuilder()
-                .header("Authorization", "Bearer $t")
+                .header("Authorization", "Bearer $token")
                 .build()
         } else {
             chain.request()
@@ -120,14 +128,12 @@ object ApiClient {
 
     val api: SleepWiseApi = withBaseUrl(PROD_BASE_URL)
 
-    fun setAuthToken(token: String) {
-        _authToken = token
-    }
-
     fun withBaseUrl(baseUrl: String): SleepWiseApi = Retrofit.Builder()
         .baseUrl(baseUrl)
         .client(httpClient)
         .addConverterFactory(GsonConverterFactory.create())
         .build()
         .create(SleepWiseApi::class.java)
+
+    private const val TAG = "ApiClient"
 }

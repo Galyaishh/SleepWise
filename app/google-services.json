@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "1036718744745",
+    "project_id": "sleepwise-4b276",
+    "storage_bucket": "sleepwise-4b276.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1036718744745:android:01f06b9c38dccae59af5b8",
+        "android_client_info": {
+          "package_name": "com.example.sleepwisepoc"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "1036718744745-frb4ceilosn28ntcv4mgnjk0pdn863oi.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.sleepwisepoc",
+            "certificate_hash": "cd80dafb1aef4f30fd0b8451a28e1dacccef8965"
+          }
+        },
+        {
+          "client_id": "1036718744745-i1eahm7oajelbfni9rpvuenis550md8b.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCLkLbvh_0ms2BDHF5mJYk1iA1gQxJjxGk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "1036718744745-i1eahm7oajelbfni9rpvuenis550md8b.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
