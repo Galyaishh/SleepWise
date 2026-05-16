@@ -117,7 +117,7 @@ fun TonightScreen(
 
             // ── Greeting ──────────────────────────────────────────────────────
             Text(
-                text = "${state.greeting}, Gal 🌙",
+                text = "${state.greeting} 🌙",
                 fontSize = 26.sp,
                 fontWeight = FontWeight.Bold,
                 color = NightTextPrimary,
@@ -137,7 +137,7 @@ fun TonightScreen(
             Spacer(Modifier.height(16.dp))
 
             // ── Readiness card ────────────────────────────────────────────────
-            ReadinessCard()
+            ReadinessCard(state.watchStatus)
 
             Spacer(Modifier.height(24.dp))
 
@@ -244,7 +244,14 @@ private fun WakeUpCard(state: TonightUiState) {
 // ─── Readiness card ───────────────────────────────────────────────────────────
 
 @Composable
-private fun ReadinessCard() {
+private fun ReadinessCard(watchStatus: WatchStatus) {
+    val (watchValue, watchOk) = when (watchStatus) {
+        WatchStatus.Checking      -> "Checking…"           to false
+        WatchStatus.Connected     -> "Connected"           to true
+        WatchStatus.NoRecentData  -> "No recent data"      to false
+        WatchStatus.Disconnected  -> "Not connected"       to false
+    }
+    val trackingReady = watchStatus == WatchStatus.Connected
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -263,19 +270,8 @@ private fun ReadinessCard() {
             ReadinessRow(
                 icon   = Icons.Outlined.Watch,
                 title  = "Galaxy Watch",
-                value  = "Connected",
-                ok     = true,
-            )
-            HorizontalDivider(
-                modifier = Modifier.padding(vertical = 12.dp),
-                color    = NightBorder,
-                thickness = 0.5.dp,
-            )
-            ReadinessRow(
-                icon   = Icons.Outlined.BatteryFull,
-                title  = "Watch battery",
-                value  = "78%",
-                ok     = true,
+                value  = watchValue,
+                ok     = watchOk,
             )
             HorizontalDivider(
                 modifier = Modifier.padding(vertical = 12.dp),
@@ -285,8 +281,8 @@ private fun ReadinessCard() {
             ReadinessRow(
                 icon   = Icons.Outlined.MonitorHeart,
                 title  = "Sleep tracking",
-                value  = "Ready",
-                ok     = true,
+                value  = if (trackingReady) "Ready" else "Waiting for watch",
+                ok     = trackingReady,
             )
         }
     }

@@ -47,12 +47,16 @@ class SamsungHealthManager(private val context: Context) {
         // Epoch duration in milliseconds (1 minute = 60000ms)
         const val EPOCH_DURATION_MS = 60000L
 
-        // Permissions we need - request all available health data
+        // Permissions we need - all sleep-relevant data types the SDK exposes.
+        // Each new entry triggers a Samsung-Health-side permission prompt on next launch.
         val PERMISSIONS = setOf(
             Permission.of(DataTypes.HEART_RATE, AccessType.READ),
             Permission.of(DataTypes.SLEEP, AccessType.READ),
             Permission.of(DataTypes.BLOOD_OXYGEN, AccessType.READ),
-            Permission.of(DataTypes.SKIN_TEMPERATURE, AccessType.READ)
+            Permission.of(DataTypes.SKIN_TEMPERATURE, AccessType.READ),
+            Permission.of(DataTypes.BODY_TEMPERATURE, AccessType.READ),
+            Permission.of(DataTypes.EXERCISE, AccessType.READ),
+            Permission.of(DataTypes.ENERGY_SCORE, AccessType.READ),
         )
     }
 
@@ -112,6 +116,22 @@ class SamsungHealthManager(private val context: Context) {
     data class SpO2Sample(
         val percentage: Int,
         val timestamp: Long
+    )
+
+    data class BodyTempSample(
+        val tempCelsius: Float,
+        val timestamp: Long,
+    )
+
+    data class ExerciseSample(
+        val startTime: Long,
+        val endTime: Long,
+        val durationMinutes: Int,
+    )
+
+    data class EnergyScoreSample(
+        val score: Int,
+        val timestamp: Long,
     )
 
     data class SleepSession(
@@ -251,11 +271,11 @@ class SamsungHealthManager(private val context: Context) {
 
             response.dataList.forEach { dataPoint ->
                 try {
-                    // Try to get SpO2 value - field name may vary
+                    val spo2 = dataPoint.getValue(DataType.BloodOxygenType.OXYGEN_SATURATION)
                     val timestamp = dataPoint.startTime.toEpochMilli()
-                    // For now, just record that we have a data point
-                    // SpO2 is typically 95-100% during normal sleep
-                    samples.add(SpO2Sample(98, timestamp))
+                    if (spo2 != null && spo2 > 0) {
+                        samples.add(SpO2Sample(spo2.toInt(), timestamp))
+                    }
                 } catch (e: Exception) {
                     Log.w(TAG, "Error parsing SpO2 data point", e)
                 }
@@ -310,6 +330,102 @@ class SamsungHealthManager(private val context: Context) {
             sessions
         } catch (e: Exception) {
             Log.e(TAG, "Failed to read sleep data", e)
+            emptyList()
+        }
+    }
+
+    // Read core body temperature (separate from skin temperature)
+    suspend fun readBodyTemperature(hoursBack: Int = 24): List<BodyTempSample> {
+        val store = healthDataStore ?: return emptyList()
+        return try {
+            val endTime = LocalDateTime.now()
+            val startTime = endTime.minusHours(hoursBack.toLong())
+            val readRequest = DataTypes.BODY_TEMPERATURE.readDataRequestBuilder
+                .setLocalTimeFilter(LocalTimeFilter.of(startTime, endTime))
+                .setOrdering(Ordering.ASC)
+                .build()
+            val response = store.readData(readRequest)
+            val samples = mutableListOf<BodyTempSample>()
+            response.dataList.forEach { dataPoint ->
+                try {
+                    val temp = dataPoint.getValue(DataType.BodyTemperatureType.BODY_TEMPERATURE)
+                    if (temp != null) {
+                        samples.add(BodyTempSample(temp, dataPoint.startTime.toEpochMilli()))
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Error parsing body-temp data point", e)
+                }
+            }
+            Log.d(TAG, "Read ${samples.size} body-temp samples")
+            samples
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to read body temperature", e)
+            emptyList()
+        }
+    }
+
+    // Read exercise sessions (workouts)
+    suspend fun readExercise(daysBack: Int = 7): List<ExerciseSample> {
+        val store = healthDataStore ?: return emptyList()
+        return try {
+            val endTime = LocalDateTime.now()
+            val startTime = endTime.minusDays(daysBack.toLong())
+            val readRequest = DataTypes.EXERCISE.readDataRequestBuilder
+                .setLocalTimeFilter(LocalTimeFilter.of(startTime, endTime))
+                .setOrdering(Ordering.DESC)
+                .build()
+            val response = store.readData(readRequest)
+            val samples = mutableListOf<ExerciseSample>()
+            response.dataList.forEach { dp ->
+                try {
+                    val start = dp.startTime.toEpochMilli()
+                    val end = dp.endTime?.toEpochMilli() ?: start
+                    samples.add(
+                        ExerciseSample(
+                            startTime = start,
+                            endTime = end,
+                            durationMinutes = ((end - start) / 60000L).toInt(),
+                        )
+                    )
+                } catch (e: Exception) {
+                    Log.w(TAG, "Error parsing exercise data point", e)
+                }
+            }
+            Log.d(TAG, "Read ${samples.size} exercise sessions")
+            samples
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to read exercise", e)
+            emptyList()
+        }
+    }
+
+    // Read daily energy score (Samsung's recovery/readiness metric, 0-100).
+    // EnergyScore uses LocalDate (per-day), unlike the other types.
+    suspend fun readEnergyScore(daysBack: Int = 7): List<EnergyScoreSample> {
+        val store = healthDataStore ?: return emptyList()
+        return try {
+            val endDate = java.time.LocalDate.now()
+            val startDate = endDate.minusDays(daysBack.toLong())
+            val readRequest = DataTypes.ENERGY_SCORE.readDataRequestBuilder
+                .setLocalDateFilter(com.samsung.android.sdk.health.data.request.LocalDateFilter.of(startDate, endDate))
+                .setOrdering(Ordering.DESC)
+                .build()
+            val response = store.readData(readRequest)
+            val samples = mutableListOf<EnergyScoreSample>()
+            response.dataList.forEach { dp ->
+                try {
+                    val score = dp.getValue(DataType.EnergyScoreType.ENERGY_SCORE)
+                    if (score != null) {
+                        samples.add(EnergyScoreSample(score.toInt(), dp.startTime.toEpochMilli()))
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Error parsing energy-score data point", e)
+                }
+            }
+            Log.d(TAG, "Read ${samples.size} energy-score entries")
+            samples
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to read energy score", e)
             emptyList()
         }
     }
@@ -498,6 +614,42 @@ class SamsungHealthManager(private val context: Context) {
                 val durationHours = (session.endTime - session.startTime) / 3600000.0
                 val startStr = dateFormatter.format(Date(session.startTime))
                 output.append("$startStr - ${String.format("%.1f", durationHours)}h\n")
+            }
+        }
+
+        // Body Temperature
+        output.append("\n--- BODY TEMPERATURE (24h) ---\n")
+        val bodyTemps = readBodyTemperature(hoursBack = 24)
+        if (bodyTemps.isEmpty()) {
+            output.append("No body-temp data\n")
+        } else {
+            val values = bodyTemps.map { it.tempCelsius }
+            output.append("Samples: ${bodyTemps.size}\n")
+            output.append("Avg: ${String.format("%.1f", values.average())}°C | Min ${String.format("%.1f", values.minOrNull())} | Max ${String.format("%.1f", values.maxOrNull())}\n")
+        }
+
+        // Exercise
+        output.append("\n--- EXERCISE (7 days) ---\n")
+        val exercises = readExercise(daysBack = 7)
+        if (exercises.isEmpty()) {
+            output.append("No exercise sessions\n")
+        } else {
+            output.append("Sessions: ${exercises.size}\n")
+            exercises.take(3).forEach { ex ->
+                val startStr = dateFormatter.format(Date(ex.startTime))
+                output.append("$startStr — ${ex.durationMinutes} min\n")
+            }
+        }
+
+        // Energy Score
+        output.append("\n--- ENERGY SCORE (7 days) ---\n")
+        val scores = readEnergyScore(daysBack = 7)
+        if (scores.isEmpty()) {
+            output.append("No energy-score data\n")
+        } else {
+            output.append("Days: ${scores.size}\n")
+            scores.take(3).forEach { s ->
+                output.append("${dateFormatter.format(Date(s.timestamp))} → ${s.score}\n")
             }
         }
 
