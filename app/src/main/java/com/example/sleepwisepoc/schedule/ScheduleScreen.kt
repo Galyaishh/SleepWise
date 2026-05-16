@@ -1,5 +1,6 @@
 package com.example.sleepwisepoc.schedule
 
+import android.app.Application
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -18,8 +19,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ChevronRight
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
@@ -28,6 +32,7 @@ import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -42,7 +47,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.ViewModel
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.sleepwisepoc.ui.theme.NightBg
 import com.example.sleepwisepoc.ui.theme.NightBorder
@@ -53,15 +59,10 @@ import com.example.sleepwisepoc.ui.theme.NightSurface2
 import com.example.sleepwisepoc.ui.theme.NightTextAccent
 import com.example.sleepwisepoc.ui.theme.NightTextPrimary
 import com.example.sleepwisepoc.ui.theme.NightTextSecondary
-import android.app.Application
-import androidx.lifecycle.AndroidViewModel
-import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 
 // ─── ViewModel ────────────────────────────────────────────────────────────────
@@ -89,6 +90,46 @@ fun ScheduleScreen(
     val schedule by viewModel.schedule.collectAsState()
     var tab by remember { mutableIntStateOf(0) }
     var showTimePicker by remember { mutableStateOf(false) }
+    var showSoundPicker by remember { mutableStateOf(false) }
+    var showSnoozePicker by remember { mutableStateOf(false) }
+
+    val day = if (tab == 0) schedule.weekday else schedule.weekend
+    val onSave: (DaySchedule) -> Unit = if (tab == 0) viewModel::saveWeekday else viewModel::saveWeekend
+
+    if (showTimePicker) {
+        SleepTimePickerDialog(
+            initialTime = day.wakeTime,
+            onConfirm = { time ->
+                onSave(day.copy(wakeTime = time))
+                showTimePicker = false
+            },
+            onDismiss = { showTimePicker = false },
+        )
+    }
+
+    if (showSoundPicker) {
+        PickerDialog(
+            title = "Alarm Sound",
+            options = ALARM_SOUNDS,
+            selected = day.alarmSound,
+            onSelect = { onSave(day.copy(alarmSound = it)); showSoundPicker = false },
+            onDismiss = { showSoundPicker = false },
+        )
+    }
+
+    if (showSnoozePicker) {
+        PickerDialog(
+            title = "Snooze Duration",
+            options = SNOOZE_OPTIONS.map { "$it min" },
+            selected = "${day.snoozeMinutes} min",
+            onSelect = { label ->
+                val mins = label.removeSuffix(" min").toIntOrNull() ?: day.snoozeMinutes
+                onSave(day.copy(snoozeMinutes = mins))
+                showSnoozePicker = false
+            },
+            onDismiss = { showSnoozePicker = false },
+        )
+    }
 
     Column(
         modifier = modifier
@@ -98,7 +139,6 @@ fun ScheduleScreen(
     ) {
         Spacer(Modifier.height(16.dp))
 
-        // Header
         Column(modifier = Modifier.padding(horizontal = 24.dp)) {
             Text("Schedule", fontSize = 34.sp, fontWeight = FontWeight.SemiBold, color = NightTextPrimary)
             Spacer(Modifier.height(3.dp))
@@ -107,7 +147,6 @@ fun ScheduleScreen(
 
         Spacer(Modifier.height(20.dp))
 
-        // Weekday / Weekend tabs
         TabRow(
             selectedTabIndex = tab,
             modifier = Modifier.padding(horizontal = 20.dp).clip(RoundedCornerShape(12.dp)),
@@ -143,21 +182,7 @@ fun ScheduleScreen(
 
         Spacer(Modifier.height(20.dp))
 
-        val day = if (tab == 0) schedule.weekday else schedule.weekend
-        val onSave: (DaySchedule) -> Unit = if (tab == 0) viewModel::saveWeekday else viewModel::saveWeekend
-
-        if (showTimePicker) {
-            SleepTimePickerDialog(
-                initialTime = day.wakeTime,
-                onConfirm = { time ->
-                    onSave(day.copy(wakeTime = time))
-                    showTimePicker = false
-                },
-                onDismiss = { showTimePicker = false },
-            )
-        }
-
-        // Wake time row
+        // Wake time + window + smart alarm
         SettingsCard {
             SettingsRow(
                 label = "Wake-up time",
@@ -167,7 +192,6 @@ fun ScheduleScreen(
 
             HorizontalDivider(color = NightBorder, thickness = 0.5.dp)
 
-            // Window duration slider
             Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -202,7 +226,6 @@ fun ScheduleScreen(
 
             HorizontalDivider(color = NightBorder, thickness = 0.5.dp)
 
-            // Smart alarm toggle
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -215,8 +238,8 @@ fun ScheduleScreen(
                     Text("Wake me during light sleep", fontSize = 12.sp, color = NightTextSecondary)
                 }
                 Switch(
-                    checked = true,
-                    onCheckedChange = {},
+                    checked = day.smartAlarm,
+                    onCheckedChange = { onSave(day.copy(smartAlarm = it)) },
                     colors = SwitchDefaults.colors(
                         checkedThumbColor = NightTextPrimary,
                         checkedTrackColor = NightPrimary,
@@ -227,7 +250,7 @@ fun ScheduleScreen(
 
         Spacer(Modifier.height(16.dp))
 
-        // Wake Experience section
+        // Wake Experience
         SettingsCard {
             Text(
                 "WAKE EXPERIENCE",
@@ -238,13 +261,66 @@ fun ScheduleScreen(
                 letterSpacing = 1.sp,
             )
             HorizontalDivider(color = NightBorder, thickness = 0.5.dp)
-            SettingsRow(label = "☀️  Sunrise Chimes", value = "Selected", valueColor = NightSuccess)
+            SettingsRow(
+                label = "Alarm Sound",
+                value = day.alarmSound,
+                valueColor = NightSuccess,
+                onClick = { showSoundPicker = true },
+            )
             HorizontalDivider(color = NightBorder, thickness = 0.5.dp)
-            SettingsRow(label = "Snooze", value = "9 min")
+            SettingsRow(
+                label = "Snooze",
+                value = "${day.snoozeMinutes} min",
+                onClick = { showSnoozePicker = true },
+            )
         }
 
         Spacer(Modifier.height(32.dp))
     }
+}
+
+// ─── Picker dialog ────────────────────────────────────────────────────────────
+
+@Composable
+private fun PickerDialog(
+    title: String,
+    options: List<String>,
+    selected: String,
+    onSelect: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title, color = NightTextPrimary, fontWeight = FontWeight.SemiBold) },
+        text = {
+            Column {
+                options.forEach { option ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onSelect(option) }
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(
+                            selected = option == selected,
+                            onClick = { onSelect(option) },
+                            colors = RadioButtonDefaults.colors(selectedColor = NightPrimary),
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(option, fontSize = 15.sp, color = NightTextPrimary)
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel", color = NightTextSecondary)
+            }
+        },
+        containerColor = NightSurface,
+    )
 }
 
 // ─── Reusable composables ─────────────────────────────────────────────────────

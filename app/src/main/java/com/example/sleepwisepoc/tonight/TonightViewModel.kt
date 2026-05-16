@@ -27,27 +27,30 @@ data class TonightUiState(
     val greeting: String = "Good evening",
     val schedule: DaySchedule = DaySchedule(),
     val isTracking: Boolean = false,
+    val isAlarmOnly: Boolean = false,
     val watchStatus: WatchStatus = WatchStatus.Checking,
 )
 
 class TonightViewModel(application: Application) : AndroidViewModel(application) {
 
     private val store = SleepScheduleStore(application)
-    private val _isTracking = MutableStateFlow(false)
+    private val _isTracking  = MutableStateFlow(false)
+    private val _isAlarmOnly = MutableStateFlow(false)
     private val _watchStatus = MutableStateFlow(WatchStatus.Checking)
 
     init {
         refreshWatchStatus()
     }
 
-    val state = combine(store.schedule, _isTracking, _watchStatus) { schedule, tracking, watch ->
+    val state = combine(store.schedule, _isTracking, _watchStatus, _isAlarmOnly) { schedule, tracking, watch, alarmOnly ->
         val tomorrow = LocalDate.now().plusDays(1)
         val isWeekend = tomorrow.dayOfWeek == DayOfWeek.SATURDAY ||
                 tomorrow.dayOfWeek == DayOfWeek.SUNDAY
         TonightUiState(
-            greeting = greeting(),
-            schedule = if (isWeekend) schedule.weekend else schedule.weekday,
-            isTracking = tracking,
+            greeting    = greeting(),
+            schedule    = if (isWeekend) schedule.weekend else schedule.weekday,
+            isTracking  = tracking,
+            isAlarmOnly = alarmOnly,
             watchStatus = watch,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), TonightUiState())
@@ -95,11 +98,20 @@ class TonightViewModel(application: Application) : AndroidViewModel(application)
         val s = state.value.schedule
         SleepMonitoringService.start(getApplication(), s.windowStart, s.wakeTime)
         _isTracking.update { true }
+        _isAlarmOnly.update { false }
+    }
+
+    fun startTrackingAlarmOnly() {
+        val s = state.value.schedule
+        SleepMonitoringService.start(getApplication(), s.windowStart, s.wakeTime)
+        _isTracking.update { true }
+        _isAlarmOnly.update { true }
     }
 
     fun stopTracking() {
         SleepMonitoringService.stop(getApplication())
         _isTracking.update { false }
+        _isAlarmOnly.update { false }
     }
 
     private fun greeting(): String {

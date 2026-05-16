@@ -97,7 +97,7 @@ class MainActivity : ComponentActivity() {
                     AppRoute.ONBOARDING -> OnboardingScreen(onComplete = authViewModel::onOnboardingComplete)
                     AppRoute.AUTH       -> AuthScreen(viewModel = authViewModel)
                     AppRoute.SETUP      -> SetupWizardScreen(onComplete = authViewModel::onSetupComplete)
-                    AppRoute.MAIN       -> MainScaffold()
+                    AppRoute.MAIN       -> MainScaffold(onSignOut = authViewModel::signOut)
                 }
             }
         }
@@ -112,7 +112,7 @@ class MainActivity : ComponentActivity() {
 // ─── Main app scaffold (after auth) ──────────────────────────────────────────
 
 @Composable
-private fun MainScaffold() {
+private fun MainScaffold(onSignOut: () -> Unit = {}) {
     var selectedTab by remember { mutableIntStateOf(0) }
     Scaffold(
         modifier = Modifier.fillMaxSize(),
@@ -128,7 +128,7 @@ private fun MainScaffold() {
             0 -> TonightScreen(modifier = Modifier.padding(innerPadding))
             1 -> SleepReportScreen(modifier = Modifier.padding(innerPadding))
             2 -> ScheduleScreen(modifier = Modifier.padding(innerPadding))
-            3 -> ProfileScreen(modifier = Modifier.padding(innerPadding))
+            3 -> ProfileScreen(modifier = Modifier.padding(innerPadding), onSignOut = onSignOut)
         }
     }
 }

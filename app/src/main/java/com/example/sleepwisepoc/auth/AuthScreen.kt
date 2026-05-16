@@ -68,6 +68,7 @@ import kotlinx.coroutines.launch
 fun AuthScreen(viewModel: AuthViewModel = viewModel()) {
     val state by viewModel.state.collectAsState()
     var showEmailForm by remember { mutableStateOf(false) }
+    var isSignUp by remember { mutableStateOf(false) }
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     val focusManager = LocalFocusManager.current
@@ -211,6 +212,15 @@ fun AuthScreen(viewModel: AuthViewModel = viewModel()) {
             } else {
                 // Email form
                 Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        text = if (isSignUp) "Create Account" else "Sign In",
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = NightTextPrimary,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+
                     SleepTextField(
                         value = email,
                         onValueChange = { email = it },
@@ -222,14 +232,15 @@ fun AuthScreen(viewModel: AuthViewModel = viewModel()) {
                     SleepTextField(
                         value = password,
                         onValueChange = { password = it },
-                        placeholder = "Password",
+                        placeholder = if (isSignUp) "Password (min 6 characters)" else "Password",
                         keyboardType = KeyboardType.Password,
                         imeAction = ImeAction.Done,
                         isPassword = true,
                         onImeAction = {
                             focusManager.clearFocus()
                             if (email.isNotBlank() && password.isNotBlank()) {
-                                viewModel.signInWithEmail(email, password)
+                                if (isSignUp) viewModel.signUpWithEmail(email, password)
+                                else viewModel.signInWithEmail(email, password)
                             }
                         },
                     )
@@ -237,13 +248,14 @@ fun AuthScreen(viewModel: AuthViewModel = viewModel()) {
                     AuthButton(
                         onClick = {
                             if (email.isNotBlank() && password.isNotBlank()) {
-                                viewModel.signInWithEmail(email, password)
+                                if (isSignUp) viewModel.signUpWithEmail(email, password)
+                                else viewModel.signInWithEmail(email, password)
                             }
                         },
                         isPrimary = true,
                     ) {
                         Text(
-                            "Sign In",
+                            if (isSignUp) "Create Account" else "Sign In",
                             fontSize = 16.sp,
                             fontWeight = FontWeight.SemiBold,
                             color = NightTextPrimary,
@@ -251,11 +263,29 @@ fun AuthScreen(viewModel: AuthViewModel = viewModel()) {
                     }
 
                     Text(
+                        text = if (isSignUp) "Already have an account? Sign In" else "New here? Create account",
+                        fontSize = 14.sp,
+                        color = NightPrimary,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                isSignUp = !isSignUp
+                                viewModel.clearError()
+                            }
+                            .padding(vertical = 4.dp),
+                    )
+
+                    Text(
                         text = "← Back",
                         fontSize = 14.sp,
                         color = NightTextSecondary,
                         modifier = Modifier
-                            .clickable { showEmailForm = false }
+                            .clickable {
+                                showEmailForm = false
+                                isSignUp = false
+                                viewModel.clearError()
+                            }
                             .padding(vertical = 4.dp),
                     )
                 }

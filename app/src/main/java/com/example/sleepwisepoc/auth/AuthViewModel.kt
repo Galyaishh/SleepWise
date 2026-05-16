@@ -1,11 +1,11 @@
 package com.example.sleepwisepoc.auth
 
 import android.app.Application
+import android.content.Context
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.auth.FirebaseAuthInvalidUserException
 import com.google.firebase.auth.GoogleAuthProvider
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -30,6 +30,19 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
 
     private val auth: FirebaseAuth = FirebaseAuth.getInstance()
 
+    private val prefs by lazy {
+        getApplication<Application>().getSharedPreferences("sleepwise_prefs", Context.MODE_PRIVATE)
+    }
+
+    private fun hasCompletedSetup(uid: String) =
+        prefs.getBoolean("setup_done_$uid", false)
+
+    private fun markSetupDone(uid: String) =
+        prefs.edit().putBoolean("setup_done_$uid", true).apply()
+
+    private fun routeAfterSignIn(uid: String) =
+        if (hasCompletedSetup(uid)) AppRoute.MAIN else AppRoute.SETUP
+
     init {
         viewModelScope.launch {
             kotlinx.coroutines.delay(800)
@@ -38,8 +51,8 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                 Log.d(TAG, "resuming session uid=${firebaseUser.uid}")
                 _state.update {
                     it.copy(
-                        screen = AppRoute.MAIN,
-                        userName = firebaseUser.displayName.orEmpty(),
+                        screen    = AppRoute.MAIN,
+                        userName  = firebaseUser.displayName.orEmpty(),
                         userEmail = firebaseUser.email.orEmpty(),
                     )
                 }
@@ -53,7 +66,6 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { it.copy(screen = AppRoute.AUTH) }
     }
 
-    /** Called by the AuthScreen after Credential Manager returns a Google ID token. */
     fun completeGoogleSignIn(idToken: String) {
         _state.update { it.copy(isLoading = true, error = null) }
         viewModelScope.launch {
@@ -65,8 +77,8 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                 _state.update {
                     it.copy(
                         isLoading = false,
-                        screen = AppRoute.SETUP,
-                        userName = user.displayName.orEmpty(),
+                        screen    = routeAfterSignIn(user.uid),
+                        userName  = user.displayName.orEmpty(),
                         userEmail = user.email.orEmpty(),
                     )
                 }
@@ -77,35 +89,73 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** Email path: try to sign in, auto-create the account if it does not exist. */
     fun signInWithEmail(email: String, password: String) {
         _state.update { it.copy(isLoading = true, error = null) }
         viewModelScope.launch {
             try {
-                val result = try {
-                    auth.signInWithEmailAndPassword(email, password).await()
-                } catch (e: FirebaseAuthInvalidUserException) {
-                    Log.d(TAG, "no account for $email — creating")
-                    auth.createUserWithEmailAndPassword(email, password).await()
-                }
-                val user = result.user ?: error("Firebase user null after email sign-in")
+                val result = auth.signInWithEmailAndPassword(email, password).await()
+                val user = result.user ?: error("Firebase user null after sign-in")
                 Log.d(TAG, "email sign-in ok uid=${user.uid}")
                 _state.update {
                     it.copy(
                         isLoading = false,
-                        screen = AppRoute.SETUP,
+                        screen    = routeAfterSignIn(user.uid),
                         userEmail = user.email.orEmpty(),
                     )
                 }
             } catch (t: Throwable) {
                 Log.w(TAG, "email sign-in failed: ${t.message}", t)
-                _state.update { it.copy(isLoading = false, error = t.message ?: "Sign-in failed") }
+                val msg = t.message.orEmpty()
+                val friendly = when {
+                    "no user" in msg.lowercase() || "user not found" in msg.lowercase() ->
+                        "No account found for this email. Switch to Sign Up to create one."
+                    "password" in msg.lowercase() -> "Incorrect password."
+                    else -> msg.ifBlank { "Sign-in failed." }
+                }
+                _state.update { it.copy(isLoading = false, error = friendly) }
+            }
+        }
+    }
+
+    fun signUpWithEmail(email: String, password: String) {
+        _state.update { it.copy(isLoading = true, error = null) }
+        viewModelScope.launch {
+            try {
+                val result = auth.createUserWithEmailAndPassword(email, password).await()
+                val user = result.user ?: error("Firebase user null after sign-up")
+                Log.d(TAG, "email sign-up ok uid=${user.uid}")
+                _state.update {
+                    it.copy(
+                        isLoading = false,
+                        screen    = AppRoute.SETUP,   // always show setup for new accounts
+                        userEmail = user.email.orEmpty(),
+                    )
+                }
+            } catch (t: Throwable) {
+                Log.w(TAG, "email sign-up failed: ${t.message}", t)
+                val msg = t.message.orEmpty()
+                val friendly = when {
+                    "already in use" in msg.lowercase() ->
+                        "An account already exists for this email. Switch to Sign In."
+                    "weak password" in msg.lowercase() -> "Password must be at least 6 characters."
+                    "badly formatted" in msg.lowercase() || "invalid email" in msg.lowercase() ->
+                        "Please enter a valid email address."
+                    else -> msg.ifBlank { "Sign-up failed." }
+                }
+                _state.update { it.copy(isLoading = false, error = friendly) }
             }
         }
     }
 
     fun onSetupComplete() {
+        val uid = auth.currentUser?.uid.orEmpty()
+        if (uid.isNotBlank()) markSetupDone(uid)
         _state.update { it.copy(screen = AppRoute.MAIN) }
+    }
+
+    fun signOut() {
+        auth.signOut()
+        _state.update { AuthState(screen = AppRoute.AUTH) }
     }
 
     fun setError(message: String) {
