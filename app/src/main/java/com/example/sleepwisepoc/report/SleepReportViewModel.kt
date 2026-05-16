@@ -42,8 +42,10 @@ class SleepReportViewModel(application: Application) : AndroidViewModel(applicat
                 Log.d(TAG, "fetching weekly for user_id=$userId")
                 val report = ApiClient.api.weeklyReport(userId)
                 _state.update {
-                    if (report.sessions.isEmpty()) ReportUiState.Empty(userId)
-                    else ReportUiState.Loaded(report)
+                    if (report.sessions.isEmpty())
+                        ReportUiState.Loaded(SleepMockData.createReport(), isDemoData = true)
+                    else
+                        ReportUiState.Loaded(report)
                 }
             } catch (t: Throwable) {
                 Log.w(TAG, "fetch failed: ${t.message} — falling back to demo data")
