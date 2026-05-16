@@ -1,5 +1,10 @@
 package com.example.sleepwisepoc.tonight
 
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.os.PowerManager
+import android.provider.Settings
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -34,6 +39,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -57,12 +63,35 @@ import java.time.format.DateTimeFormatter
 
 private val TimeFmt = DateTimeFormatter.ofPattern("hh:mm a")
 
+private fun requestBatteryOptimizationExemption(context: Context) {
+    val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager ?: return
+    if (pm.isIgnoringBatteryOptimizations(context.packageName)) return
+    try {
+        val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+            data = Uri.parse("package:${context.packageName}")
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(intent)
+    } catch (_: Throwable) {
+        // Some OEMs hide the system intent; user will need to whitelist manually.
+    }
+}
+
 @Composable
 fun TonightScreen(
     modifier: Modifier = Modifier,
     viewModel: TonightViewModel = viewModel(),
 ) {
     val state by viewModel.state.collectAsState()
+    val context = LocalContext.current
+
+    val onStartTracking: () -> Unit = {
+        // Request a battery-optimization whitelist *before* the foreground
+        // service starts, so Android won't Doze the prediction loop overnight.
+        // No-op if the user already granted it.
+        requestBatteryOptimizationExemption(context)
+        viewModel.startTracking()
+    }
 
     Box(
         modifier = modifier
@@ -144,7 +173,7 @@ fun TonightScreen(
             // ── CTA button ────────────────────────────────────────────────────
             StartButton(
                 isTracking = state.isTracking,
-                onStart = viewModel::startTracking,
+                onStart = onStartTracking,
                 onStop = viewModel::stopTracking,
             )
 

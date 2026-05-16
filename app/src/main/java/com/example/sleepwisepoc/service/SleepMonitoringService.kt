@@ -113,10 +113,25 @@ class SleepMonitoringService : Service() {
         Log.d(TAG, "loop tick=${tickMs}ms isEmulator=$isEmulator")
         if (isEmulator) healthManager = null  // Samsung Health not present on emulator
 
+        // Pick the calendar date the window belongs to. If the start time is
+        // already in the past for today (e.g. user starts tracking at 22:30 for
+        // a 06:30 wake window), the window is on tomorrow's date.
         val today = LocalDate.now()
         val zone = ZoneId.systemDefault()
-        val startEpoch = today.atTime(start).atZone(zone).toEpochSecond() * 1000
-        val endEpoch = today.atTime(end).atZone(zone).toEpochSecond() * 1000
+        val windowDate = if (start.isBefore(LocalTime.now())) today.plusDays(1) else today
+        val startEpoch = windowDate.atTime(start).atZone(zone).toEpochSecond() * 1000
+        val endEpoch = windowDate.atTime(end).atZone(zone).toEpochSecond() * 1000
+        Log.d(TAG, "window resolved: $windowDate ${start}..${end} (${startEpoch}..${endEpoch})")
+
+        // Pre-schedule a hard fallback at window end via AlarmManager. This
+        // alarm survives the service being killed by the OS overnight (Doze,
+        // Samsung battery optimization, OOM). If the loop later detects a
+        // favorable Light moment, it re-schedules the same PendingIntent for
+        // earlier — AlarmManager replaces the old one.
+        if (System.currentTimeMillis() < endEpoch) {
+            AlarmScheduler.scheduleAt(this, endEpoch)
+            Log.d(TAG, "fallback alarm pre-scheduled for $endEpoch")
+        }
 
         update("Watching for the perfect moment to wake you")
 
