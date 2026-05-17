@@ -122,8 +122,10 @@ object ApiClient {
     private val httpClient = OkHttpClient.Builder()
         .addInterceptor(authInterceptor)
         .addInterceptor(loggingInterceptor)
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(20, TimeUnit.SECONDS)
+        // Generous timeouts: Render free tier cold-starts can take 30-40s after idle.
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(60, TimeUnit.SECONDS)
+        .writeTimeout(30, TimeUnit.SECONDS)
         .build()
 
     val api: SleepWiseApi = withBaseUrl(PROD_BASE_URL)

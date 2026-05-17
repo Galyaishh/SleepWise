@@ -2,6 +2,7 @@ package com.example.sleepwisepoc
 
 import android.app.Activity
 import android.content.Context
+import android.content.Intent
 import android.os.Environment
 import android.util.Log
 import com.samsung.android.sdk.health.data.HealthDataService
@@ -61,6 +62,41 @@ class SamsungHealthManager(private val context: Context) {
     }
 
     private var healthDataStore: HealthDataStore? = null
+
+    /**
+     * Best-effort: fire known Samsung Health / Galaxy Wearable broadcast actions
+     * to nudge the watch→phone sync. None of these are public API — they're
+     * reverse-engineered from Samsung's package layout — so any subset may be
+     * ignored on a given firmware version. Logs which broadcasts we sent;
+     * caller should wait ~2-3s before reading to give the sync time to land.
+     */
+    fun triggerSamsungHealthSync() {
+        val actions = listOf(
+            "com.samsung.android.app.shealth.intent.action.SYNC",
+            "com.samsung.android.app.shealth.intent.action.HEALTH_DATA_SYNC",
+            "com.samsung.android.app.shealth.intent.action.START_HEALTH_DATA_SYNC",
+            "com.samsung.android.intent.action.SYNC_SAMSUNG_HEALTH",
+            "com.samsung.android.gearplugin.intent.action.SYNC",
+        )
+        val targetPackages = listOf(
+            "com.sec.android.app.shealth",
+            "com.samsung.android.service.health",
+            "com.samsung.android.wearable.gear",
+        )
+        actions.forEach { action ->
+            targetPackages.forEach { pkg ->
+                try {
+                    val intent = Intent(action).apply { setPackage(pkg) }
+                    context.sendBroadcast(intent)
+                } catch (_: Throwable) { /* ignored */ }
+            }
+            // Also try without explicit package (broad)
+            try {
+                context.sendBroadcast(Intent(action))
+            } catch (_: Throwable) { /* ignored */ }
+        }
+        Log.d(TAG, "triggerSamsungHealthSync: broadcast ${actions.size} actions × ${targetPackages.size + 1} targets")
+    }
 
     // Initialize the SDK
     fun initialize(): Boolean {
@@ -340,10 +376,22 @@ class SamsungHealthManager(private val context: Context) {
                     val sessionStart = dataPoint.startTime.toEpochMilli()
                     val sessionEnd = dataPoint.endTime?.toEpochMilli() ?: sessionStart
 
-                    // Try to get sleep stages if available
+                    // Each "sleep" data point's SESSIONS field holds one or more
+                    // segmented sessions; each session has a .stages list with
+                    // the per-segment stage (AWAKE / LIGHT / DEEP / REM).
                     val stages = mutableListOf<SleepStage>()
-                    // Note: Samsung Health SDK sleep stage parsing depends on SDK version
-                    // The stages might be in sub-data or separate queries
+                    val sdkSessions = dataPoint.getValue(DataType.SleepType.SESSIONS)
+                    sdkSessions?.forEach { sdkSession ->
+                        sdkSession.stages?.forEach { st ->
+                            stages.add(
+                                SleepStage(
+                                    stage = st.stage.name,  // "AWAKE" / "LIGHT" / "DEEP" / "REM" / "UNDEFINED"
+                                    startTime = st.startTime.toEpochMilli(),
+                                    endTime = st.endTime.toEpochMilli(),
+                                )
+                            )
+                        }
+                    }
 
                     sessions.add(SleepSession(
                         startTime = sessionStart,
@@ -642,7 +690,14 @@ class SamsungHealthManager(private val context: Context) {
             sleepSessions.take(3).forEach { session ->
                 val durationHours = (session.endTime - session.startTime) / 3600000.0
                 val startStr = dateFormatter.format(Date(session.startTime))
-                output.append("$startStr - ${String.format("%.1f", durationHours)}h\n")
+                output.append("$startStr - ${String.format("%.1f", durationHours)}h")
+                if (session.stages.isNotEmpty()) {
+                    // Aggregate minutes per stage
+                    val perStage = session.stages.groupBy { it.stage }
+                        .mapValues { (_, list) -> list.sumOf { (it.endTime - it.startTime) / 60000L } }
+                    output.append("  stages=${perStage.entries.joinToString(",") { "${it.key.first()}${it.value}m" }}")
+                }
+                output.append("\n")
             }
         }
 
