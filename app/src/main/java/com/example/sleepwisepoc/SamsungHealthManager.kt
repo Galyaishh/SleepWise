@@ -194,11 +194,23 @@ class SamsungHealthManager(private val context: Context) {
 
             response.dataList.forEach { dataPoint ->
                 try {
-                    val bpm = dataPoint.getValue(DataType.HeartRateType.HEART_RATE)
-                    val timestamp = dataPoint.startTime.toEpochMilli()
-
-                    if (bpm != null && bpm > 0) {
-                        samples.add(HeartRateSample(bpm.toInt(), timestamp))
+                    // Watch HR is packaged as series inside each data-point container.
+                    // SERIES_DATA holds the individual samples; the top-level
+                    // HEART_RATE field is only an aggregate. Prefer the series.
+                    val series = dataPoint.getValue(DataType.HeartRateType.SERIES_DATA)
+                    if (series != null && series.isNotEmpty()) {
+                        series.forEach { hr ->
+                            if (hr.heartRate > 0) {
+                                samples.add(
+                                    HeartRateSample(hr.heartRate.toInt(), hr.startTime.toEpochMilli())
+                                )
+                            }
+                        }
+                    } else {
+                        val bpm = dataPoint.getValue(DataType.HeartRateType.HEART_RATE)
+                        if (bpm != null && bpm > 0) {
+                            samples.add(HeartRateSample(bpm.toInt(), dataPoint.startTime.toEpochMilli()))
+                        }
                     }
                 } catch (e: Exception) {
                     Log.w(TAG, "Error parsing heart rate data point", e)
@@ -232,11 +244,18 @@ class SamsungHealthManager(private val context: Context) {
 
             response.dataList.forEach { dataPoint ->
                 try {
-                    val temp = dataPoint.getValue(DataType.SkinTemperatureType.SKIN_TEMPERATURE)
-                    val timestamp = dataPoint.startTime.toEpochMilli()
-
-                    if (temp != null) {
-                        samples.add(TemperatureSample(temp, timestamp))
+                    val series = dataPoint.getValue(DataType.SkinTemperatureType.SERIES_DATA)
+                    if (series != null && series.isNotEmpty()) {
+                        series.forEach { st ->
+                            samples.add(
+                                TemperatureSample(st.skinTemperature, st.startTime.toEpochMilli())
+                            )
+                        }
+                    } else {
+                        val temp = dataPoint.getValue(DataType.SkinTemperatureType.SKIN_TEMPERATURE)
+                        if (temp != null) {
+                            samples.add(TemperatureSample(temp, dataPoint.startTime.toEpochMilli()))
+                        }
                     }
                 } catch (e: Exception) {
                     Log.w(TAG, "Error parsing temperature data point", e)
@@ -271,10 +290,20 @@ class SamsungHealthManager(private val context: Context) {
 
             response.dataList.forEach { dataPoint ->
                 try {
-                    val spo2 = dataPoint.getValue(DataType.BloodOxygenType.OXYGEN_SATURATION)
-                    val timestamp = dataPoint.startTime.toEpochMilli()
-                    if (spo2 != null && spo2 > 0) {
-                        samples.add(SpO2Sample(spo2.toInt(), timestamp))
+                    val series = dataPoint.getValue(DataType.BloodOxygenType.SERIES_DATA)
+                    if (series != null && series.isNotEmpty()) {
+                        series.forEach { os ->
+                            if (os.oxygenSaturation > 0) {
+                                samples.add(
+                                    SpO2Sample(os.oxygenSaturation.toInt(), os.startTime.toEpochMilli())
+                                )
+                            }
+                        }
+                    } else {
+                        val spo2 = dataPoint.getValue(DataType.BloodOxygenType.OXYGEN_SATURATION)
+                        if (spo2 != null && spo2 > 0) {
+                            samples.add(SpO2Sample(spo2.toInt(), dataPoint.startTime.toEpochMilli()))
+                        }
                     }
                 } catch (e: Exception) {
                     Log.w(TAG, "Error parsing SpO2 data point", e)
