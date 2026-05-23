@@ -13,6 +13,8 @@ import androidx.core.app.NotificationCompat
 import com.example.sleepwisepoc.ApiClient
 import com.example.sleepwisepoc.MainActivity
 import com.example.sleepwisepoc.SamsungHealthManager
+import com.example.sleepwisepoc.wear.WearCommand
+import com.example.sleepwisepoc.wear.WearHrSource
 import com.google.firebase.auth.FirebaseAuth
 import com.example.sleepwisepoc.SessionUpload
 import com.example.sleepwisepoc.StageTick
@@ -102,6 +104,11 @@ class SleepMonitoringService : Service() {
         sessionWindowStart = start
         sessionWindowEnd = end
         tickHistory.clear()
+        // Tell the watch companion to start streaming real-time HR.
+        scope.launch {
+            val ok = WearCommand.startStreaming(this@SleepMonitoringService)
+            SessionLog.log(this@SleepMonitoringService, "WEAR_START sent=$ok")
+        }
         loop = scope.launch { runLoop(start, end) }
         return START_REDELIVER_INTENT
     }
@@ -207,6 +214,13 @@ class SleepMonitoringService : Service() {
 
     override fun onDestroy() {
         SessionLog.log(this, "onDestroy (alarmFired=$alarmFired)")
+        // Tell the watch companion to stop streaming — runs synchronously on a
+        // throwaway scope so it actually completes before the process winds down.
+        runCatching {
+            kotlinx.coroutines.runBlocking {
+                WearCommand.stopStreaming(this@SleepMonitoringService)
+            }
+        }
         loop?.cancel()
         scope.cancel()
         predictor?.close()
@@ -228,6 +242,22 @@ class SleepMonitoringService : Service() {
         epochIndex: Int,
         totalEpochs: Int,
     ): TFLiteSleepPredictor.EpochFeatures {
+        // Priority 1: real-time HR from the wear companion. If we have ≥3 HR
+        // samples in the last 60s and the freshest sample is <2 min old, build
+        // an epoch from those samples instead of touching Samsung Health.
+        val wearLagMs = WearHrSource.lagMillis()
+        if (wearLagMs in 0..120_000) {
+            val recent = WearHrSource.recentHr(minutesBack = 2)
+                .filter { it.timestamp >= System.currentTimeMillis() - 60_000 }
+            if (recent.size >= MIN_HR_SAMPLES) {
+                val features = featuresFromWearSamples(recent)
+                SessionLog.log(this, "acquireEpoch WEAR_LIVE: " +
+                        "hrMean=${features.hrMean.toInt()}bpm hrSamples=${recent.size} " +
+                        "lag=${wearLagMs / 1000}s")
+                return features
+            }
+        }
+
         val manager = healthManager
         if (manager != null) {
             try {
@@ -261,6 +291,50 @@ class SleepMonitoringService : Service() {
         }
         SessionLog.log(this, "acquireEpoch MOCK: epoch #$epochIndex (no health manager)")
         return predictor.createMockEpoch("light", epochIndex, totalEpochs)
+    }
+
+    /**
+     * Build the 12 epoch features (9 HR stats + 3 temp stats) directly from a
+     * list of live HR samples received from the wear companion. Skin temp isn't
+     * available in real time from Wear OS Health Services, so we use the same
+     * 34 °C constant fallback as SamsungHealthManager.processDataIntoEpochs.
+     */
+    private fun featuresFromWearSamples(
+        samples: List<SamsungHealthManager.HeartRateSample>,
+    ): TFLiteSleepPredictor.EpochFeatures {
+        val bpm = samples.map { it.bpm.toFloat() }.sorted()
+        val n = bpm.size
+        val mean = bpm.average().toFloat()
+        val variance = bpm.map { val d = it - mean; d * d }.average().toFloat()
+        val std = kotlin.math.sqrt(variance.toDouble()).toFloat()
+        val min = bpm.first()
+        val max = bpm.last()
+        val median = if (n % 2 == 1) bpm[n / 2] else (bpm[n / 2 - 1] + bpm[n / 2]) / 2f
+        val q1 = bpm[(n * 0.25).toInt().coerceAtMost(n - 1)]
+        val q3 = bpm[(n * 0.75).toInt().coerceAtMost(n - 1)]
+        val iqr = q3 - q1
+        val skew = if (std > 0f) {
+            val m3 = bpm.map {
+                val d = (it - mean) / std
+                d * d * d
+            }.average().toFloat()
+            m3
+        } else 0f
+        val cv = if (mean > 0f) std / mean * 100f else 0f
+        return TFLiteSleepPredictor.EpochFeatures(
+            hrMean = mean,
+            hrStd = std,
+            hrMin = min,
+            hrMax = max,
+            hrRange = max - min,
+            hrCv = cv,
+            hrMedian = median,
+            hrIqr = iqr,
+            hrSkew = skew,
+            tempMean = 34.0f,       // skin temp not available in real time
+            tempStd = 0.0f,
+            tempTrend = 0.0f,
+        )
     }
 
     // ─── Upload ───────────────────────────────────────────────────────────────

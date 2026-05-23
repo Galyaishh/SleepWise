@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- This is a Wear OS companion APK to the phone app — declare standalone=false
+         so Wear OS knows it's paired with a phone app of the same applicationId. -->
+    <uses-feature android:name="android.hardware.type.watch" />
+
+    <!-- Real-time HR + accelerometer access -->
+    <uses-permission android:name="android.permission.BODY_SENSORS" />
+    <!-- BODY_SENSORS_BACKGROUND (Android 13+) so the foreground service keeps
+         streaming HR with the screen off / on the wrist. -->
+    <uses-permission android:name="android.permission.BODY_SENSORS_BACKGROUND" />
+    <!-- Foreground service so the watch OS keeps our HR loop alive overnight -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_HEALTH" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <application
+        android:allowBackup="true"
+        android:label="SleepWise"
+        android:theme="@android:style/Theme.DeviceDefault"
+        tools:ignore="MissingApplicationIcon">
+
+        <!-- Companion-app marker. standalone=false ties the watch APK to the
+             phone APK with the same applicationId (com.example.sleepwisepoc). -->
+        <meta-data
+            android:name="com.google.android.wearable.standalone"
+            android:value="false" />
+
+        <!-- Tiny launcher activity (just "Streaming HR…" / "Idle"). -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="SleepWise">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Foreground service that registers MeasureClient for HR and forwards
+             values to the phone via MessageClient. Started by the phone app
+             through Wearable Data Layer when tracking begins. -->
+        <service
+            android:name=".HrStreamService"
+            android:exported="false"
+            android:foregroundServiceType="health" />
+
+        <!-- Receives "start streaming" / "stop streaming" messages from the
+             phone via Wearable Data Layer. -->
+        <service
+            android:name=".PhoneCommandListener"
+            android:exported="true"
+            tools:ignore="ExportedService">
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />
+                <data android:scheme="wear" android:host="*" android:pathPrefix="/sleepwise/cmd" />
+            </intent-filter>
+        </service>
+
+    </application>
+</manifest>

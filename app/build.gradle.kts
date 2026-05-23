@@ -59,6 +59,9 @@ dependencies {
     // Health Connect - Read health data from Samsung Health / Galaxy Watch
     implementation("androidx.health.connect:connect-client:1.1.0-alpha10")
 
+    // Wearable Data Layer — receive real-time HR batches from the wear companion app.
+    implementation("com.google.android.gms:play-services-wearable:18.2.0")
+
     // Retrofit - HTTP client for backend API calls
     implementation("com.squareup.retrofit2:retrofit:2.9.0")
     implementation("com.squareup.retrofit2:converter-gson:2.9.0")
