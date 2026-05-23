@@ -13,6 +13,7 @@ import androidx.core.app.NotificationCompat
 import com.example.sleepwisepoc.ApiClient
 import com.example.sleepwisepoc.MainActivity
 import com.example.sleepwisepoc.SamsungHealthManager
+import com.example.sleepwisepoc.wear.WearAccelSource
 import com.example.sleepwisepoc.wear.WearCommand
 import com.example.sleepwisepoc.wear.WearHrSource
 import com.google.firebase.auth.FirebaseAuth
@@ -206,12 +207,18 @@ class SleepMonitoringService : Service() {
             val latestEpochAgeMs = now - lastProcessedEpochEndMs
             val insideWindow = lastProcessedEpochEndMs in startEpoch..endEpoch
             val fresh = latestEpochAgeMs <= MAX_DATA_AGE_FOR_DECISION_MS
+            // Movement-event counts from the wear accelerometer — observability
+            // only at this stage. Will become a wake gate ("only fire alarm if
+            // user actually moved recently") once we've seen overnight data.
+            val movementLast1m = WearAccelSource.movementEventsInWindow(60_000)
+            val movementLast5m = WearAccelSource.movementEventsInWindow(5 * 60_000)
             SessionLog.log(
                 this,
                 "tick #$tickNum processed=${newEpochs.size} latestEpoch=${java.util.Date(lastProcessedEpochEndMs)} " +
                         "age=${latestEpochAgeMs / 60000}min stage=${lastPred!!.sleepStage} " +
                         "conf=${"%.2f".format(lastPred!!.confidence)} stable=${lastPred!!.isStable} " +
-                        "insideWindow=$insideWindow fresh=$fresh"
+                        "insideWindow=$insideWindow fresh=$fresh " +
+                        "moves1m=$movementLast1m moves5m=$movementLast5m"
             )
 
             val favorable = insideWindow && fresh &&

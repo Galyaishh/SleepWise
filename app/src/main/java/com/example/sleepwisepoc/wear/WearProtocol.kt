@@ -9,6 +9,7 @@ object WearProtocol {
     const val PATH_CMD_START = "/sleepwise/cmd/start"
     const val PATH_CMD_STOP = "/sleepwise/cmd/stop"
     const val PATH_HR_BATCH = "/sleepwise/hr"
+    const val PATH_ACCEL_BATCH = "/sleepwise/accel"
 
     fun encodeBatch(samples: List<Pair<Long, Float>>): ByteArray =
         samples.joinToString(";") { "${it.first},${it.second}" }.toByteArray(Charsets.UTF_8)
@@ -20,8 +21,8 @@ object WearProtocol {
             val parts = piece.split(",")
             if (parts.size != 2) return@mapNotNull null
             val ts = parts[0].toLongOrNull() ?: return@mapNotNull null
-            val bpm = parts[1].toFloatOrNull() ?: return@mapNotNull null
-            ts to bpm
+            val value = parts[1].toFloatOrNull() ?: return@mapNotNull null
+            ts to value
         }
     }
 }

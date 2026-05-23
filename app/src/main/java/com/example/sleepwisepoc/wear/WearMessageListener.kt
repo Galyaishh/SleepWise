@@ -15,18 +15,30 @@ import com.google.android.gms.wearable.WearableListenerService
 class WearMessageListener : WearableListenerService() {
 
     override fun onMessageReceived(event: MessageEvent) {
-        if (event.path != WearProtocol.PATH_HR_BATCH) {
-            Log.d(TAG, "ignored path=${event.path}")
-            return
+        when (event.path) {
+            WearProtocol.PATH_HR_BATCH -> {
+                val samples = WearProtocol.decodeBatch(event.data)
+                if (samples.isEmpty()) return
+                WearHrSource.appendBatch(samples)
+                SessionLog.log(
+                    this,
+                    "WEAR_HR_BATCH received=${samples.size} bufferNow=${WearHrSource.bufferSize()} " +
+                            "lagMin=${WearHrSource.lagMillis() / 60_000}"
+                )
+            }
+            WearProtocol.PATH_ACCEL_BATCH -> {
+                val samples = WearProtocol.decodeBatch(event.data)
+                if (samples.isEmpty()) return
+                WearAccelSource.appendBatch(samples)
+                val events1min = WearAccelSource.movementEventsInWindow(60_000)
+                SessionLog.log(
+                    this,
+                    "WEAR_ACCEL_BATCH received=${samples.size} bufferNow=${WearAccelSource.bufferSize()} " +
+                            "movementEvents_last1m=$events1min"
+                )
+            }
+            else -> Log.d(TAG, "ignored path=${event.path}")
         }
-        val samples = WearProtocol.decodeBatch(event.data)
-        if (samples.isEmpty()) return
-        WearHrSource.appendBatch(samples)
-        SessionLog.log(
-            this,
-            "WEAR_HR_BATCH received=${samples.size} bufferNow=${WearHrSource.bufferSize()} " +
-                    "lagMin=${WearHrSource.lagMillis() / 60_000}"
-        )
     }
 
     companion object {
