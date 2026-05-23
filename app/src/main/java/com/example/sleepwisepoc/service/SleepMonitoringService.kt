@@ -146,15 +146,18 @@ class SleepMonitoringService : Service() {
 
         update("Watching for the perfect moment to wake you")
 
-        var epochIndex = 0
-        val totalEpochs = (Duration.between(start, end).toMinutes()).coerceAtLeast(10).toInt()
+        // We never produce a prediction from synthetic data — only from real
+        // HR samples. The predictor's state advances monotonically with the
+        // sample timestamps we feed in, not with wall-clock ticks. When a
+        // burst arrives covering N minutes, we build N sequential 1-min
+        // epochs from it and let the predictor walk through them in order.
+        var lastProcessedEpochEndMs = 0L
+        var tickNum = 0
 
         while (scope.isActive && !alarmFired) {
+            tickNum++
             val now = System.currentTimeMillis()
-            val insideWindow = now in startEpoch..endEpoch
-            val pastWindow = now > endEpoch
-
-            if (pastWindow) {
+            if (now > endEpoch) {
                 SessionLog.log(this, "PAST_WINDOW now=${java.util.Date(now)} > endEpoch — firing fallback alarm")
                 AlarmScheduler.scheduleAt(this, now + 500)
                 alarmFired = true
@@ -165,44 +168,64 @@ class SleepMonitoringService : Service() {
                 break
             }
 
-            // Build & feed an epoch into the predictor
-            val pred = predictor?.let { p ->
-                val epoch = acquireEpoch(p, epochIndex, totalEpochs)
-                p.addEpoch(epoch)
-                if (p.canPredict()) p.predict() else null
+            val newEpochs = buildNewEpochsFromRealData(lastProcessedEpochEndMs)
+            if (newEpochs.isEmpty()) {
+                SessionLog.log(this, "tick #$tickNum no new real epochs since " +
+                        "${if (lastProcessedEpochEndMs > 0) java.util.Date(lastProcessedEpochEndMs) else "service-start"} — skipping")
+                delay(tickMs)
+                continue
             }
-            epochIndex++
 
-            if (pred != null) {
-                tickHistory += StageTick(
-                    t = Instant.now().toString(),
-                    stage = pred.sleepStage,
-                    conf = pred.confidence,
-                    stable = pred.isStable,
-                )
-                SessionLog.log(
-                    this,
-                    "tick #$epochIndex now=${java.util.Date(now)} stage=${pred.sleepStage} " +
-                            "conf=${"%.2f".format(pred.confidence)} stable=${pred.isStable} " +
-                            "insideWindow=$insideWindow"
-                )
-
-                val favorable = insideWindow &&
-                        pred.sleepStage.equals("Light", ignoreCase = true) &&
-                        pred.isStable
-
-                if (favorable) {
-                    SessionLog.log(this, "FAVORABLE moment detected — firing alarm now")
-                    AlarmScheduler.scheduleAt(this, now + 500)
-                    alarmFired = true
-                    update("Light sleep detected — gently waking you")
-                    withContext(NonCancellable + Dispatchers.IO) {
-                        uploadSession(firedReason = "favorable", firedAt = Instant.now())
+            // Feed each new epoch to the predictor in chronological order so the
+            // EMA + hysteresis + 3-consecutive-stable smoothing walks through
+            // the trajectory naturally. Last prediction is what we act on.
+            var lastPred: TFLiteSleepPredictor.SleepPrediction? = null
+            newEpochs.forEach { epoch ->
+                predictor?.addEpoch(epoch.features)
+                if (predictor?.canPredict() == true) {
+                    lastPred = predictor?.predict()
+                    if (lastPred != null) {
+                        tickHistory += StageTick(
+                            t = Instant.ofEpochMilli(epoch.endTimeMs).toString(),
+                            stage = lastPred!!.sleepStage,
+                            conf = lastPred!!.confidence,
+                            stable = lastPred!!.isStable,
+                        )
                     }
-                    break
                 }
-            } else {
-                SessionLog.log(this, "tick #$epochIndex buffer=${predictor?.getBufferSize()} (warming up)")
+                lastProcessedEpochEndMs = epoch.endTimeMs
+            }
+
+            if (lastPred == null) {
+                SessionLog.log(this, "tick #$tickNum processed ${newEpochs.size} epochs, " +
+                        "predictor still warming up (buffer=${predictor?.getBufferSize()})")
+                delay(tickMs)
+                continue
+            }
+
+            val latestEpochAgeMs = now - lastProcessedEpochEndMs
+            val insideWindow = lastProcessedEpochEndMs in startEpoch..endEpoch
+            val fresh = latestEpochAgeMs <= MAX_DATA_AGE_FOR_DECISION_MS
+            SessionLog.log(
+                this,
+                "tick #$tickNum processed=${newEpochs.size} latestEpoch=${java.util.Date(lastProcessedEpochEndMs)} " +
+                        "age=${latestEpochAgeMs / 60000}min stage=${lastPred!!.sleepStage} " +
+                        "conf=${"%.2f".format(lastPred!!.confidence)} stable=${lastPred!!.isStable} " +
+                        "insideWindow=$insideWindow fresh=$fresh"
+            )
+
+            val favorable = insideWindow && fresh &&
+                    lastPred!!.sleepStage.equals("Light", ignoreCase = true) &&
+                    lastPred!!.isStable
+            if (favorable) {
+                SessionLog.log(this, "FAVORABLE moment detected — firing alarm now")
+                AlarmScheduler.scheduleAt(this, now + 500)
+                alarmFired = true
+                update("Light sleep detected — gently waking you")
+                withContext(NonCancellable + Dispatchers.IO) {
+                    uploadSession(firedReason = "favorable", firedAt = Instant.now())
+                }
+                break
             }
 
             delay(tickMs)
@@ -210,6 +233,55 @@ class SleepMonitoringService : Service() {
 
         SessionLog.log(this, "loop finished (alarmFired=$alarmFired) — stopping service")
         stopSelf()
+    }
+
+    /** Cohort of HR samples bucketed into a 1-minute epoch, with predictor-ready features. */
+    private data class RealEpoch(
+        val startTimeMs: Long,
+        val endTimeMs: Long,
+        val features: TFLiteSleepPredictor.EpochFeatures,
+        val hrSampleCount: Int,
+    )
+
+    /**
+     * Pull fresh HR samples from every available source (wear stream is the
+     * primary; Samsung Health is the fallback for nights where the wear
+     * companion isn't installed), bucket them into 1-minute epochs strictly
+     * AFTER [sinceMs], compute features, return chronologically.
+     */
+    private suspend fun buildNewEpochsFromRealData(sinceMs: Long): List<RealEpoch> {
+        // Pull a generous backlog so a 5-6 min burst is fully covered.
+        val wearSamples = WearHrSource.recentHr(minutesBack = 15)
+        val healthSamples = try {
+            healthManager?.readHeartRate(hoursBack = 1) ?: emptyList()
+        } catch (_: Throwable) { emptyList() }
+        // Dedup by second-truncated timestamp; wear samples come first so
+        // they win ties (they're the real-time source).
+        val merged = (wearSamples + healthSamples)
+            .filter { it.timestamp > sinceMs && it.bpm > 0 }
+            .distinctBy { it.timestamp / 1000 }
+            .sortedBy { it.timestamp }
+        if (merged.isEmpty()) return emptyList()
+
+        val out = mutableListOf<RealEpoch>()
+        val epochSizeMs = SamsungHealthManager.EPOCH_DURATION_MS
+        var epochStart = (merged.first().timestamp / epochSizeMs) * epochSizeMs
+        while (epochStart <= merged.last().timestamp) {
+            val epochEnd = epochStart + epochSizeMs
+            val epochSamples = merged.filter { it.timestamp in epochStart until epochEnd }
+            if (epochSamples.size >= MIN_HR_SAMPLES && epochEnd > sinceMs) {
+                out.add(
+                    RealEpoch(
+                        startTimeMs = epochStart,
+                        endTimeMs = epochEnd,
+                        features = featuresFromWearSamples(epochSamples),
+                        hrSampleCount = epochSamples.size,
+                    )
+                )
+            }
+            epochStart = epochEnd
+        }
+        return out
     }
 
     override fun onDestroy() {
@@ -227,71 +299,7 @@ class SleepMonitoringService : Service() {
         super.onDestroy()
     }
 
-    // ─── Epoch acquisition ────────────────────────────────────────────────────
-
-    /**
-     * Returns the best available epoch for the current tick.
-     *
-     * Priority:
-     *   1. Real HR data from Samsung Health (last 1 h, latest complete epoch)
-     *      — requires Samsung Health app + permissions + watch connected
-     *   2. Mock epoch — guaranteed fallback so the alarm always works
-     */
-    private suspend fun acquireEpoch(
-        predictor: TFLiteSleepPredictor,
-        epochIndex: Int,
-        totalEpochs: Int,
-    ): TFLiteSleepPredictor.EpochFeatures {
-        // Priority 1: real-time HR from the wear companion. If we have ≥3 HR
-        // samples in the last 60s and the freshest sample is <2 min old, build
-        // an epoch from those samples instead of touching Samsung Health.
-        val wearLagMs = WearHrSource.lagMillis()
-        if (wearLagMs in 0..120_000) {
-            val recent = WearHrSource.recentHr(minutesBack = 2)
-                .filter { it.timestamp >= System.currentTimeMillis() - 60_000 }
-            if (recent.size >= MIN_HR_SAMPLES) {
-                val features = featuresFromWearSamples(recent)
-                SessionLog.log(this, "acquireEpoch WEAR_LIVE: " +
-                        "hrMean=${features.hrMean.toInt()}bpm hrSamples=${recent.size} " +
-                        "lag=${wearLagMs / 1000}s")
-                return features
-            }
-        }
-
-        val manager = healthManager
-        if (manager != null) {
-            try {
-                val epochs = manager.processDataIntoEpochs(hoursBack = 1)
-                val latest = epochs.lastOrNull()
-                // Probe all three sensor streams in parallel so we can tell if they
-                // share a single overnight batch or sync on different schedules.
-                val hr1h = try { manager.readHeartRate(hoursBack = 1) } catch (_: Throwable) { emptyList() }
-                val temp1h = try { manager.readSkinTemperature(hoursBack = 1) } catch (_: Throwable) { emptyList() }
-                val spo21h = try { manager.readBloodOxygen(hoursBack = 1) } catch (_: Throwable) { emptyList() }
-                val latestHrTs = hr1h.maxOfOrNull { it.timestamp } ?: 0L
-                val latestTempTs = temp1h.maxOfOrNull { it.timestamp } ?: 0L
-                val latestSpo2Ts = spo21h.maxOfOrNull { it.timestamp } ?: 0L
-                val nowMs = System.currentTimeMillis()
-                fun lag(ts: Long) = if (ts > 0) (nowMs - ts) / 60000 else -1L
-                SessionLog.log(this, "DATA_SNAPSHOT last_1h: " +
-                        "HR=${hr1h.size}(latest=${if (latestHrTs > 0) java.util.Date(latestHrTs) else "—"} lag=${lag(latestHrTs)}min) " +
-                        "TEMP=${temp1h.size}(latest=${if (latestTempTs > 0) java.util.Date(latestTempTs) else "—"} lag=${lag(latestTempTs)}min) " +
-                        "SPO2=${spo21h.size}(latest=${if (latestSpo2Ts > 0) java.util.Date(latestSpo2Ts) else "—"} lag=${lag(latestSpo2Ts)}min)")
-                if (latest != null && latest.hrSampleCount >= MIN_HR_SAMPLES) {
-                    SessionLog.log(this, "acquireEpoch REAL: " +
-                            "epoch=${latest.timeString} hrMean=${latest.hrMean.toInt()}bpm " +
-                            "hrSamples=${latest.hrSampleCount} tempSamples=${latest.tempSampleCount}")
-                    return manager.epochToFeatures(latest)
-                }
-                SessionLog.log(this, "acquireEpoch MOCK_FALLBACK: real data insufficient " +
-                        "(${latest?.hrSampleCount ?: 0} samples in latest epoch)")
-            } catch (e: Exception) {
-                SessionLog.log(this, "acquireEpoch MOCK_FALLBACK: health read threw (${e.message})")
-            }
-        }
-        SessionLog.log(this, "acquireEpoch MOCK: epoch #$epochIndex (no health manager)")
-        return predictor.createMockEpoch("light", epochIndex, totalEpochs)
-    }
+    // ─── Epoch feature computation ────────────────────────────────────────────
 
     /**
      * Build the 12 epoch features (9 HR stats + 3 temp stats) directly from a
@@ -415,6 +423,11 @@ class SleepMonitoringService : Service() {
         private const val TICK_SEC_REAL = 60L
         private const val TICK_SEC_DEMO = 10L
         private const val MIN_HR_SAMPLES = 3   // minimum HR samples in an epoch to trust it
+        // How old the latest real epoch can be while still firing the alarm.
+        // Sleep cycles change on the ~10-20 min scale, so a Light prediction
+        // built from data <10 min old is still acting on a defensible read of
+        // the user's current state.
+        private const val MAX_DATA_AGE_FOR_DECISION_MS = 10L * 60 * 1000
 
         fun start(context: Context, start: LocalTime, end: LocalTime) {
             val intent = Intent(context, SleepMonitoringService::class.java).apply {
