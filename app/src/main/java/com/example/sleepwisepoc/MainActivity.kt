@@ -75,16 +75,21 @@ class MainActivity : ComponentActivity() {
             Log.d("MainActivity", "isEmulator=$isEmulator, TFLite: $tfliteInitialized")
         }
 
-        // POST_NOTIFICATIONS required on Android 13+ for alarm notifications.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
-                    != PackageManager.PERMISSION_GRANTED) {
-                ActivityCompat.requestPermissions(
-                    this,
-                    arrayOf(Manifest.permission.POST_NOTIFICATIONS),
-                    100,
-                )
-            }
+        // Runtime permissions: POST_NOTIFICATIONS (Android 13+) for the smart-alarm
+        // notification, BLUETOOTH_CONNECT (Android 12+) for the watch-paired check.
+        val toRequest = mutableListOf<String>()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+                != PackageManager.PERMISSION_GRANTED) {
+            toRequest += Manifest.permission.POST_NOTIFICATIONS
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT)
+                != PackageManager.PERMISSION_GRANTED) {
+            toRequest += Manifest.permission.BLUETOOTH_CONNECT
+        }
+        if (toRequest.isNotEmpty()) {
+            ActivityCompat.requestPermissions(this, toRequest.toTypedArray(), 100)
         }
 
         setContent {

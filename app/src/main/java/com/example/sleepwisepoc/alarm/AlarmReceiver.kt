@@ -11,14 +11,19 @@ import android.media.RingtoneManager
 import android.os.Build
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import com.example.sleepwisepoc.service.SessionLog
 
 class AlarmReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
         Log.d(TAG, "onReceive action=${intent.action} extras=${intent.extras?.keySet()?.toList()}")
+        SessionLog.log(context, "AlarmReceiver onReceive action=${intent.action}")
 
         when (intent.action) {
-            ACTION_FIRE_ALARM -> showAlarmNotification(context)
+            ACTION_FIRE_ALARM -> {
+                showAlarmNotification(context)
+                SessionLog.log(context, "AlarmReceiver: notification posted (id=$NOTIFICATION_ID)")
+            }
             Intent.ACTION_BOOT_COMPLETED -> Log.d(TAG, "BOOT_COMPLETED — scheduling restoration not implemented yet")
         }
     }

@@ -94,7 +94,8 @@ class SleepMonitoringService : Service() {
         }
         val start = LocalTime.of(startMin / 60, startMin % 60)
         val end = LocalTime.of(endMin / 60, endMin % 60)
-        Log.d(TAG, "onStartCommand window=$start..$end")
+        SessionLog.reset(this)
+        SessionLog.log(this, "onStartCommand window=$start..$end")
 
         loop?.cancel()
         sessionStartedAt = Instant.now()
@@ -110,7 +111,7 @@ class SleepMonitoringService : Service() {
                 Build.MODEL.contains("emulator", ignoreCase = true) ||
                 Build.MODEL.contains("sdk", ignoreCase = true)
         val tickMs = (if (isEmulator) TICK_SEC_DEMO else TICK_SEC_REAL) * 1000L
-        Log.d(TAG, "loop tick=${tickMs}ms isEmulator=$isEmulator")
+        SessionLog.log(this, "loop tick=${tickMs}ms isEmulator=$isEmulator")
         if (isEmulator) healthManager = null  // Samsung Health not present on emulator
 
         // Pick the calendar date the window belongs to. If the start time is
@@ -121,7 +122,8 @@ class SleepMonitoringService : Service() {
         val windowDate = if (start.isBefore(LocalTime.now())) today.plusDays(1) else today
         val startEpoch = windowDate.atTime(start).atZone(zone).toEpochSecond() * 1000
         val endEpoch = windowDate.atTime(end).atZone(zone).toEpochSecond() * 1000
-        Log.d(TAG, "window resolved: $windowDate ${start}..${end} (${startEpoch}..${endEpoch})")
+        SessionLog.log(this, "window resolved: $windowDate $start..$end " +
+                "(startEpoch=${java.util.Date(startEpoch)} endEpoch=${java.util.Date(endEpoch)})")
 
         // Pre-schedule a hard fallback at window end via AlarmManager. This
         // alarm survives the service being killed by the OS overnight (Doze,
@@ -130,7 +132,9 @@ class SleepMonitoringService : Service() {
         // earlier — AlarmManager replaces the old one.
         if (System.currentTimeMillis() < endEpoch) {
             AlarmScheduler.scheduleAt(this, endEpoch)
-            Log.d(TAG, "fallback alarm pre-scheduled for $endEpoch")
+            SessionLog.log(this, "fallback alarm pre-scheduled for ${java.util.Date(endEpoch)}")
+        } else {
+            SessionLog.log(this, "WARN: endEpoch already in the past — NOT pre-scheduling fallback alarm")
         }
 
         update("Watching for the perfect moment to wake you")
@@ -144,7 +148,7 @@ class SleepMonitoringService : Service() {
             val pastWindow = now > endEpoch
 
             if (pastWindow) {
-                Log.d(TAG, "past window end — firing fallback alarm (UC-3 alt 3a)")
+                SessionLog.log(this, "PAST_WINDOW now=${java.util.Date(now)} > endEpoch — firing fallback alarm")
                 AlarmScheduler.scheduleAt(this, now + 500)
                 alarmFired = true
                 update("Wake-up window ended — alarm firing")
@@ -169,10 +173,11 @@ class SleepMonitoringService : Service() {
                     conf = pred.confidence,
                     stable = pred.isStable,
                 )
-                Log.d(
-                    TAG,
-                    "tick #$epochIndex stage=${pred.sleepStage} conf=${"%.2f".format(pred.confidence)} " +
-                            "stable=${pred.isStable} insideWindow=$insideWindow"
+                SessionLog.log(
+                    this,
+                    "tick #$epochIndex now=${java.util.Date(now)} stage=${pred.sleepStage} " +
+                            "conf=${"%.2f".format(pred.confidence)} stable=${pred.isStable} " +
+                            "insideWindow=$insideWindow"
                 )
 
                 val favorable = insideWindow &&
@@ -180,7 +185,7 @@ class SleepMonitoringService : Service() {
                         pred.isStable
 
                 if (favorable) {
-                    Log.d(TAG, "favorable moment detected — firing now")
+                    SessionLog.log(this, "FAVORABLE moment detected — firing alarm now")
                     AlarmScheduler.scheduleAt(this, now + 500)
                     alarmFired = true
                     update("Light sleep detected — gently waking you")
@@ -190,18 +195,18 @@ class SleepMonitoringService : Service() {
                     break
                 }
             } else {
-                Log.d(TAG, "tick #$epochIndex buffer=${predictor?.getBufferSize()} (warming up)")
+                SessionLog.log(this, "tick #$epochIndex buffer=${predictor?.getBufferSize()} (warming up)")
             }
 
             delay(tickMs)
         }
 
-        Log.d(TAG, "loop finished (alarmFired=$alarmFired) — stopping service")
+        SessionLog.log(this, "loop finished (alarmFired=$alarmFired) — stopping service")
         stopSelf()
     }
 
     override fun onDestroy() {
-        Log.d(TAG, "onDestroy")
+        SessionLog.log(this, "onDestroy (alarmFired=$alarmFired)")
         loop?.cancel()
         scope.cancel()
         predictor?.close()
@@ -228,18 +233,33 @@ class SleepMonitoringService : Service() {
             try {
                 val epochs = manager.processDataIntoEpochs(hoursBack = 1)
                 val latest = epochs.lastOrNull()
+                // Probe all three sensor streams in parallel so we can tell if they
+                // share a single overnight batch or sync on different schedules.
+                val hr1h = try { manager.readHeartRate(hoursBack = 1) } catch (_: Throwable) { emptyList() }
+                val temp1h = try { manager.readSkinTemperature(hoursBack = 1) } catch (_: Throwable) { emptyList() }
+                val spo21h = try { manager.readBloodOxygen(hoursBack = 1) } catch (_: Throwable) { emptyList() }
+                val latestHrTs = hr1h.maxOfOrNull { it.timestamp } ?: 0L
+                val latestTempTs = temp1h.maxOfOrNull { it.timestamp } ?: 0L
+                val latestSpo2Ts = spo21h.maxOfOrNull { it.timestamp } ?: 0L
+                val nowMs = System.currentTimeMillis()
+                fun lag(ts: Long) = if (ts > 0) (nowMs - ts) / 60000 else -1L
+                SessionLog.log(this, "DATA_SNAPSHOT last_1h: " +
+                        "HR=${hr1h.size}(latest=${if (latestHrTs > 0) java.util.Date(latestHrTs) else "—"} lag=${lag(latestHrTs)}min) " +
+                        "TEMP=${temp1h.size}(latest=${if (latestTempTs > 0) java.util.Date(latestTempTs) else "—"} lag=${lag(latestTempTs)}min) " +
+                        "SPO2=${spo21h.size}(latest=${if (latestSpo2Ts > 0) java.util.Date(latestSpo2Ts) else "—"} lag=${lag(latestSpo2Ts)}min)")
                 if (latest != null && latest.hrSampleCount >= MIN_HR_SAMPLES) {
-                    Log.d(TAG, "acquireEpoch: real data — HR=${latest.hrMean.toInt()} bpm " +
-                            "(${latest.hrSampleCount} samples @ ${latest.timeString})")
+                    SessionLog.log(this, "acquireEpoch REAL: " +
+                            "epoch=${latest.timeString} hrMean=${latest.hrMean.toInt()}bpm " +
+                            "hrSamples=${latest.hrSampleCount} tempSamples=${latest.tempSampleCount}")
                     return manager.epochToFeatures(latest)
                 }
-                Log.d(TAG, "acquireEpoch: real data insufficient " +
-                        "(${latest?.hrSampleCount ?: 0} samples) → mock")
+                SessionLog.log(this, "acquireEpoch MOCK_FALLBACK: real data insufficient " +
+                        "(${latest?.hrSampleCount ?: 0} samples in latest epoch)")
             } catch (e: Exception) {
-                Log.w(TAG, "acquireEpoch: health read failed (${e.message}) → mock")
+                SessionLog.log(this, "acquireEpoch MOCK_FALLBACK: health read threw (${e.message})")
             }
         }
-        Log.d(TAG, "acquireEpoch: using mock epoch #$epochIndex")
+        SessionLog.log(this, "acquireEpoch MOCK: epoch #$epochIndex (no health manager)")
         return predictor.createMockEpoch("light", epochIndex, totalEpochs)
     }
 

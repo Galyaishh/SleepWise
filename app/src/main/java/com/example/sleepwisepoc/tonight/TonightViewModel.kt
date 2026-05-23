@@ -1,11 +1,18 @@
 package com.example.sleepwisepoc.tonight
 
+import android.Manifest
 import android.app.Application
+import android.bluetooth.BluetoothClass
+import android.bluetooth.BluetoothManager
+import android.content.Context
+import android.content.pm.PackageManager
 import android.os.Build
 import android.util.Log
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.sleepwisepoc.ApiClient
+import com.example.sleepwisepoc.HealthConnectManager
 import com.example.sleepwisepoc.SamsungHealthManager
 import com.example.sleepwisepoc.SessionUpload
 import com.example.sleepwisepoc.StageTick
@@ -43,8 +50,21 @@ class TonightViewModel(application: Application) : AndroidViewModel(application)
     private val _isAlarmOnly = MutableStateFlow(false)
     private val _watchStatus = MutableStateFlow(WatchStatus.Checking)
 
+    /** True after the heavy one-shot diagnostic has been run this VM lifetime. */
+    private var deepDiagnosticRun = false
+
     init {
+        // First pass on app launch: light status check + heavy diagnostic
+        // (retrospective + Samsung comparison + good-run upload). Subsequent
+        // refreshes (on Tonight tab re-entry, during tracking) skip the heavy
+        // path so we're not doing 500-epoch inference every minute.
         refreshWatchStatus()
+        viewModelScope.launch(Dispatchers.IO) {
+            if (!deepDiagnosticRun) {
+                deepDiagnosticRun = true
+                runOneShotDiagnostic()
+            }
+        }
     }
 
     val state = combine(store.schedule, _isTracking, _watchStatus, _isAlarmOnly) { schedule, tracking, watch, alarmOnly ->
@@ -60,13 +80,27 @@ class TonightViewModel(application: Application) : AndroidViewModel(application)
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), TonightUiState())
 
-    /** Probe Samsung Health for recent HR data — that's our proxy for "watch connected". */
+    /**
+     * Watch-readiness logic:
+     *   1. Bluetooth bonded-devices: if no watch-class / "Galaxy" / "Watch" device
+     *      is paired, status = Disconnected. ("No watch paired")
+     *   2. Samsung Health Data SDK probe (HR + temp + SpO2 in last 1h):
+     *        any samples  → Connected      ("Connected")
+     *        zero samples → NoRecentData   ("Paired, not syncing")
+     *   3. SDK init failure → Disconnected as well (treat as not usable).
+     */
     fun refreshWatchStatus() {
         val isEmulator = Build.FINGERPRINT.contains("generic", ignoreCase = true) ||
                 Build.MODEL.contains("emulator", ignoreCase = true) ||
                 Build.HARDWARE.contains("ranchu", ignoreCase = true) ||
                 Build.HARDWARE.contains("goldfish", ignoreCase = true)
         if (isEmulator) {
+            _watchStatus.value = WatchStatus.Disconnected
+            return
+        }
+        // Step 1: BT pairing — definitive "no watch" check, independent of Samsung Health.
+        if (!hasPairedWatch(getApplication())) {
+            Log.d(TAG, "watch readiness: no bonded watch device → Disconnected")
             _watchStatus.value = WatchStatus.Disconnected
             return
         }
@@ -79,46 +113,22 @@ class TonightViewModel(application: Application) : AndroidViewModel(application)
                 return@launch
             }
             try {
-                // First, snapshot the freshest HR timestamp we currently see —
-                // then fire the sync-broadcast hack, wait a bit, and re-snapshot
-                // so we can measure whether the broadcasts actually reduced lag.
-                val beforeHr = mgr.readHeartRate(hoursBack = 24)
-                val beforeLatest = beforeHr.maxOfOrNull { it.timestamp } ?: 0L
-                val beforeLagMin = if (beforeLatest > 0)
-                    (System.currentTimeMillis() - beforeLatest) / 60000 else -1
-                Log.d(TAG, "LAG before sync-broadcast: ${beforeLagMin}min (latest=${java.util.Date(beforeLatest)})")
-                mgr.triggerSamsungHealthSync()
-                kotlinx.coroutines.delay(3000)
-                val afterHr = mgr.readHeartRate(hoursBack = 24)
-                val afterLatest = afterHr.maxOfOrNull { it.timestamp } ?: 0L
-                val afterLagMin = if (afterLatest > 0)
-                    (System.currentTimeMillis() - afterLatest) / 60000 else -1
-                Log.d(TAG, "LAG after  sync-broadcast: ${afterLagMin}min (latest=${java.util.Date(afterLatest)})")
-                Log.d(TAG, "LAG delta: ${beforeLagMin - afterLagMin}min " +
-                        "(new samples=${afterHr.size - beforeHr.size})")
-
-                // "Connected" = any data type synced in the last hour.
-                // We probe HR + skin-temp + SpO2 in parallel-ish so we don't
-                // miss watches that sync temperature/SpO2 first.
+                // Light readiness check: "Connected" = any HR/temp/SpO2 sample
+                // synced in the last hour. Cheap; safe to call every minute.
                 val hr = mgr.readHeartRate(hoursBack = 1)
                 val temp = mgr.readSkinTemperature(hoursBack = 1)
                 val spo2 = mgr.readBloodOxygen(hoursBack = 1)
                 val recentTotal = hr.size + temp.size + spo2.size
                 _watchStatus.value =
                     if (recentTotal > 0) WatchStatus.Connected else WatchStatus.NoRecentData
-                Log.d(TAG, "watch readiness last 1h: HR=${hr.size} temp=${temp.size} spo2=${spo2.size}")
-                // Full diagnostic dump — see what data Samsung Health actually has.
-                // Visible in logcat with `adb logcat -s TonightViewModel:D`.
-                runCatching { Log.d(TAG, "\n" + mgr.getFormattedHealthData()) }
-                // Retrospective: feed last 24h of real epochs through the TFLite
-                // model so we can see what stage trajectory it would have predicted,
-                // then compare against Samsung's own stages and upload a synthetic
-                // "good run" session to the backend.
-                runCatching {
-                    val predictions = runRetrospectiveInference(mgr)
-                    compareWithSamsungStages(mgr, predictions)
-                    uploadRetrospectiveAsGoodRun(mgr, predictions)
-                }
+                val latest = hr.maxOfOrNull { it.timestamp } ?: 0L
+                val lagMin = if (latest > 0)
+                    (System.currentTimeMillis() - latest) / 60000 else -1
+                val latestStr = if (latest > 0) java.text.SimpleDateFormat(
+                    "HH:mm:ss", java.util.Locale.getDefault()
+                ).format(java.util.Date(latest)) else "—"
+                Log.d(TAG, "watch readiness last 1h: HR=${hr.size} temp=${temp.size} " +
+                        "spo2=${spo2.size} | latestHR=$latestStr lag=${lagMin}min")
             } catch (t: Throwable) {
                 Log.w(TAG, "watch readiness check failed: ${t.message}")
                 _watchStatus.value = WatchStatus.Disconnected
@@ -144,6 +154,143 @@ class TonightViewModel(application: Application) : AndroidViewModel(application)
         SleepMonitoringService.stop(getApplication())
         _isTracking.update { false }
         _isAlarmOnly.update { false }
+    }
+
+    /**
+     * One-shot heavy diagnostic that runs once per ViewModel lifetime:
+     * full Samsung Health dump, retrospective TFLite inference, comparison
+     * against Samsung's stages, and a synthetic "good run" session upload.
+     * Kept separate from refreshWatchStatus so the periodic light refresh
+     * (every minute during tracking) doesn't re-run a 500-epoch inference.
+     */
+    private suspend fun runOneShotDiagnostic() {
+        // Probe Health Connect alongside Samsung Health Data SDK — Samsung Health
+        // writes to Health Connect too, and HC's read path may surface data
+        // sooner. If HC's "latest HR" is consistently fresher than SDK's, we
+        // should switch the live tracking path to HC.
+        runCatching { probeHealthConnectLag() }
+
+        val mgr = SamsungHealthManager(getApplication())
+        if (!mgr.initialize()) {
+            Log.w(TAG, "DIAG: Samsung Health init failed")
+            return
+        }
+        try {
+            runCatching { dumpHourlyHrTimeline(mgr) }
+            runCatching { Log.d(TAG, "\n" + mgr.getFormattedHealthData()) }
+            runCatching {
+                val predictions = runRetrospectiveInference(mgr)
+                compareWithSamsungStages(mgr, predictions)
+                uploadRetrospectiveAsGoodRun(mgr, predictions)
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "DIAG failed: ${t.message}", t)
+        }
+    }
+
+    /**
+     * Dump HR sample counts bucketed by clock hour for the last 48h, plus the
+     * gap between the earliest sample and the next non-empty bucket. Lets us
+     * see whether overnight data arrived as a single batch (one hour fat,
+     * others zero) or as continuous trickle (every hour populated).
+     *
+     * For each hour bucket we log:
+     *   [HH:00–HH:59]  count=N  first=tt:tt  last=tt:tt  gapToPrev=Xmin
+     */
+    private suspend fun dumpHourlyHrTimeline(mgr: SamsungHealthManager) {
+        val hoursBack = 168  // 7 days, so historical nights are visible
+        val hr = mgr.readHeartRate(hoursBack = hoursBack).map { it.timestamp }
+        val temp = mgr.readSkinTemperature(hoursBack = hoursBack).map { it.timestamp }
+        val spo2 = mgr.readBloodOxygen(hoursBack = hoursBack).map { it.timestamp }
+        val bodyTemp = runCatching { mgr.readBodyTemperature(hoursBack = hoursBack).map { it.timestamp } }
+            .getOrDefault(emptyList())
+
+        dumpTimeline("HR", hr, hoursBack)
+        dumpTimeline("SKIN_TEMP", temp, hoursBack)
+        dumpTimeline("SPO2", spo2, hoursBack)
+        dumpTimeline("BODY_TEMP", bodyTemp, hoursBack)
+    }
+
+    /**
+     * Bucket a list of sample timestamps (ms epoch) by clock-hour and log
+     * count/first/last/gap for each non-empty hour.
+     */
+    private fun dumpTimeline(label: String, tsList: List<Long>, hoursBack: Int) {
+        if (tsList.isEmpty()) {
+            Log.d(TAG, "${label}_TIMELINE: no samples in last ${hoursBack}h")
+            return
+        }
+        val zone = java.time.ZoneId.systemDefault()
+        val byHour = tsList.groupBy { ts ->
+            java.time.Instant.ofEpochMilli(ts)
+                .atZone(zone)
+                .truncatedTo(java.time.temporal.ChronoUnit.HOURS)
+        }.toSortedMap()
+        val hourFmt = java.time.format.DateTimeFormatter.ofPattern("MM-dd HH:00")
+        val timeFmt = java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss")
+        Log.d(
+            TAG,
+            "${label}_TIMELINE: ${tsList.size} samples across ${byHour.size} hour-buckets (${hoursBack}h window)"
+        )
+        var prevHourLast: java.time.ZonedDateTime? = null
+        byHour.forEach { (hourStart, samples) ->
+            val first = java.time.Instant.ofEpochMilli(samples.min()).atZone(zone)
+            val last = java.time.Instant.ofEpochMilli(samples.max()).atZone(zone)
+            val gapToPrevMin = prevHourLast?.let {
+                java.time.Duration.between(it, first).toMinutes()
+            } ?: -1
+            Log.d(
+                TAG,
+                "${label}_TIMELINE [${hourStart.format(hourFmt)}] count=${samples.size} " +
+                        "first=${first.format(timeFmt)} last=${last.format(timeFmt)} " +
+                        "gapToPrev=${gapToPrevMin}min"
+            )
+            prevHourLast = last
+        }
+    }
+
+    /** Head-to-head latency probe: log the latest HR sample timestamps from
+     *  Samsung Health Data SDK and Health Connect, plus the wall-clock lag for each. */
+    private suspend fun probeHealthConnectLag() {
+        val ctx = getApplication<Application>()
+        if (!HealthConnectManager.isAvailable(ctx)) {
+            Log.d(TAG, "HC: not available on this device")
+            return
+        }
+        val hc = HealthConnectManager(ctx)
+        val granted = try { hc.hasAllPermissions() } catch (t: Throwable) {
+            Log.w(TAG, "HC: permission check failed: ${t.message}"); false
+        }
+        if (!granted) {
+            Log.d(TAG, "HC: permissions NOT granted — cannot compare lag yet")
+            return
+        }
+        try {
+            val hcHr = hc.readHeartRate(hoursBack = 24)
+            val hcLatest = hcHr.maxOfOrNull { it.timestamp.toEpochMilli() } ?: 0L
+            val hcLagMin = if (hcLatest > 0)
+                (System.currentTimeMillis() - hcLatest) / 60000 else -1
+            // For comparison, Samsung Health SDK side:
+            val sdkMgr = SamsungHealthManager(ctx)
+            sdkMgr.initialize()
+            val sdkHr = sdkMgr.readHeartRate(hoursBack = 24)
+            val sdkLatest = sdkHr.maxOfOrNull { it.timestamp } ?: 0L
+            val sdkLagMin = if (sdkLatest > 0)
+                (System.currentTimeMillis() - sdkLatest) / 60000 else -1
+            Log.d(
+                TAG,
+                "HC vs SDK lag: HC=${hcLagMin}min (${hcHr.size} samples) | " +
+                        "SDK=${sdkLagMin}min (${sdkHr.size} samples) | " +
+                        "winner=${if (hcLagMin in 0..sdkLagMin) "HC" else "SDK"}"
+            )
+            // Bonus: HRV via Health Connect, if Samsung Health forwards it.
+            runCatching {
+                val hrv = hc.readHRV(hoursBack = 24)
+                Log.d(TAG, "HC HRV samples (24h): ${hrv.size}")
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "HC: probe failed: ${t.message}")
+        }
     }
 
     /** A single model prediction tagged with its epoch start time (ms). */
@@ -346,6 +493,52 @@ class TonightViewModel(application: Application) : AndroidViewModel(application)
             ?.firstOrNull()
             ?.takeIf { it.isNotBlank() }
         return if (firstName != null) "$timeOfDay, $firstName" else timeOfDay
+    }
+
+    /**
+     * True iff a watch-class Bluetooth device is currently bonded to this phone.
+     * Uses bondedDevices (not a scan) so it's instant and doesn't need
+     * BLUETOOTH_SCAN. Requires BLUETOOTH_CONNECT on API 31+.
+     *
+     * Detection: bonded device whose major class is WEARABLE, OR whose name
+     * contains "Galaxy" / "Watch" (covers Samsung's wearables that sometimes
+     * advertise as PHONE class with a Galaxy Watch name).
+     */
+    private fun hasPairedWatch(ctx: Context): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+            ContextCompat.checkSelfPermission(ctx, Manifest.permission.BLUETOOTH_CONNECT)
+            != PackageManager.PERMISSION_GRANTED) {
+            // No permission yet — fall through to data probe rather than block.
+            Log.d(TAG, "hasPairedWatch: BLUETOOTH_CONNECT not granted, assuming paired")
+            return true
+        }
+        val mgr = ctx.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+            ?: return true
+        val adapter = mgr.adapter ?: return false
+        if (!adapter.isEnabled) {
+            Log.d(TAG, "hasPairedWatch: bluetooth adapter disabled")
+            return false
+        }
+        return try {
+            val bonded = adapter.bondedDevices ?: emptySet()
+            val match = bonded.firstOrNull { device ->
+                val majorClass = device.bluetoothClass?.majorDeviceClass
+                val name = device.name.orEmpty()
+                majorClass == BluetoothClass.Device.Major.WEARABLE ||
+                        name.contains("Galaxy", ignoreCase = true) ||
+                        name.contains("Watch", ignoreCase = true)
+            }
+            if (match != null) {
+                Log.d(TAG, "hasPairedWatch: matched ${match.name}")
+                true
+            } else {
+                Log.d(TAG, "hasPairedWatch: ${bonded.size} bonded devices, no watch")
+                false
+            }
+        } catch (e: SecurityException) {
+            Log.w(TAG, "hasPairedWatch: SecurityException, assuming paired", e)
+            true
+        }
     }
 
     companion object {

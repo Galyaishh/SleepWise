@@ -45,6 +45,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -99,8 +100,27 @@ fun TonightScreen(
     val context = LocalContext.current
     var showNoWatchDialog by remember { mutableStateOf(false) }
 
-    val watchMissing = state.watchStatus == WatchStatus.Disconnected ||
-            state.watchStatus == WatchStatus.NoRecentData
+    // "Watch missing" now means strictly "no watch paired to this phone".
+    // Paired-but-not-syncing (NoRecentData) is fine to start tracking — fresh
+    // samples will arrive once Samsung Health flushes during the night.
+    val watchMissing = state.watchStatus == WatchStatus.Disconnected
+
+    // Refresh watch status every time the user opens the Tonight tab so the
+    // readiness card reflects fresh Samsung Health data, not a snapshot from
+    // app launch. Stays light — heavy diagnostic only runs once at app launch.
+    LaunchedEffect(Unit) {
+        viewModel.refreshWatchStatus()
+    }
+    // While a tracking session is active, also refresh every minute so the
+    // card updates as Samsung Health gradually flushes new samples.
+    LaunchedEffect(state.isTracking) {
+        if (state.isTracking) {
+            while (true) {
+                kotlinx.coroutines.delay(60_000)
+                viewModel.refreshWatchStatus()
+            }
+        }
+    }
 
     val wakeTimeFormatted = state.schedule.wakeTime.format(TimeFmt)
 
@@ -509,9 +529,9 @@ private fun WakeUpCard(state: TonightUiState) {
 private fun ReadinessCard(watchStatus: WatchStatus) {
     val (watchValue, watchOk) = when (watchStatus) {
         WatchStatus.Checking     -> "Checking…"      to false
-        WatchStatus.Connected    -> "Connected"       to true
-        WatchStatus.NoRecentData -> "No recent data"  to false
-        WatchStatus.Disconnected -> "Not connected"   to false
+        WatchStatus.Connected    -> "Connected"            to true
+        WatchStatus.NoRecentData -> "Paired, not syncing"  to false
+        WatchStatus.Disconnected -> "No watch paired"      to false
     }
     val trackingReady = watchStatus == WatchStatus.Connected
 
