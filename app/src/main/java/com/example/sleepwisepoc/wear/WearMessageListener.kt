@@ -25,6 +25,11 @@ class WearMessageListener : WearableListenerService() {
                     "WEAR_HR_BATCH received=${samples.size} bufferNow=${WearHrSource.bufferSize()} " +
                             "lagMin=${WearHrSource.lagMillis() / 60_000}"
                 )
+                // Event-driven prediction: a fresh HR batch is the trigger for a
+                // prediction pass. This delivery is OS-pushed so it pierces Doze,
+                // unlike the old coroutine delay() loop that Doze froze.
+                com.example.sleepwisepoc.service.SleepMonitoringService.instance
+                    ?.onWearDataArrived("hr")
             }
             WearProtocol.PATH_ACCEL_BATCH -> {
                 val samples = WearProtocol.decodeBatch(event.data)

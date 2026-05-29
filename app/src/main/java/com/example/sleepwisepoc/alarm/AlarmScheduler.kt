@@ -13,6 +13,7 @@ import java.util.Locale
 object AlarmScheduler {
     const val TAG = "AlarmScheduler"
     private const val REQUEST_CODE = 42
+    private const val REQUEST_CODE_TICK = 43
 
     private val timeFmt = SimpleDateFormat("HH:mm:ss", Locale.US)
 
@@ -41,6 +42,28 @@ object AlarmScheduler {
         Log.d(TAG, "alarm canceled")
     }
 
+    /**
+     * Schedule a Doze-proof "prediction tick" via setExactAndAllowWhileIdle.
+     * This is the backstop that drives prediction passes overnight when the
+     * wear data-push path goes quiet — a plain coroutine delay() is frozen by
+     * Doze, but setExactAndAllowWhileIdle is the one timer API that pierces it.
+     */
+    fun scheduleTickAt(context: Context, triggerAtMillis: Long) {
+        val am = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !am.canScheduleExactAlarms()) {
+            Log.w(TAG, "cannot schedule exact tick — permission not granted")
+            return
+        }
+        am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMillis, tickPendingIntent(context))
+        Log.d(TAG, "scheduled TICK at ${timeFmt.format(Date(triggerAtMillis))}")
+    }
+
+    fun cancelTick(context: Context) {
+        val am = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        am.cancel(tickPendingIntent(context))
+        Log.d(TAG, "tick canceled")
+    }
+
     private fun pendingIntent(context: Context, mutable: Boolean): PendingIntent {
         val intent = Intent(context, AlarmReceiver::class.java).apply {
             action = AlarmReceiver.ACTION_FIRE_ALARM
@@ -49,5 +72,16 @@ object AlarmScheduler {
         var flags = PendingIntent.FLAG_UPDATE_CURRENT
         flags = flags or if (mutable) PendingIntent.FLAG_MUTABLE else PendingIntent.FLAG_IMMUTABLE
         return PendingIntent.getBroadcast(context, REQUEST_CODE, intent, flags)
+    }
+
+    private fun tickPendingIntent(context: Context): PendingIntent {
+        val intent = Intent(context, AlarmReceiver::class.java).apply {
+            action = AlarmReceiver.ACTION_TICK
+            `package` = context.packageName
+        }
+        return PendingIntent.getBroadcast(
+            context, REQUEST_CODE_TICK, intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
     }
 }

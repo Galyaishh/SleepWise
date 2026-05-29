@@ -12,6 +12,7 @@ import android.os.Build
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.example.sleepwisepoc.service.SessionLog
+import com.example.sleepwisepoc.service.SleepMonitoringService
 
 class AlarmReceiver : BroadcastReceiver() {
 
@@ -21,8 +22,17 @@ class AlarmReceiver : BroadcastReceiver() {
 
         when (intent.action) {
             ACTION_FIRE_ALARM -> {
-                showAlarmNotification(context)
-                SessionLog.log(context, "AlarmReceiver: notification posted (id=$NOTIFICATION_ID)")
+                // Start the foreground ring service — it owns the looping
+                // ringtone + vibration + full-screen wake. (A bare notification
+                // only plays the sound once, which read as "no real alarm".)
+                AlarmRingService.start(context)
+                SessionLog.log(context, "AlarmReceiver: AlarmRingService started")
+            }
+            ACTION_TICK -> {
+                // Doze-proof backstop: drive a prediction pass even when the
+                // process is idle and coroutine timers are frozen.
+                SessionLog.log(context, "AlarmReceiver: TICK → service")
+                SleepMonitoringService.triggerTick(context)
             }
             Intent.ACTION_BOOT_COMPLETED -> Log.d(TAG, "BOOT_COMPLETED — scheduling restoration not implemented yet")
         }
@@ -92,6 +102,7 @@ class AlarmReceiver : BroadcastReceiver() {
     companion object {
         const val TAG = "AlarmReceiver"
         const val ACTION_FIRE_ALARM = "com.example.sleepwisepoc.ACTION_FIRE_ALARM"
+        const val ACTION_TICK = "com.example.sleepwisepoc.ACTION_TICK"
         const val CHANNEL_ID = "smart_alarm"
         const val NOTIFICATION_ID = 1001
     }

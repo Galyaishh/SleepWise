@@ -21,15 +21,15 @@ import com.example.sleepwisepoc.SessionUpload
 import com.example.sleepwisepoc.StageTick
 import com.example.sleepwisepoc.TFLiteSleepPredictor
 import com.example.sleepwisepoc.alarm.AlarmScheduler
+import com.example.sleepwisepoc.alarm.AlarmReceiver
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.time.Duration
 import java.time.Instant
@@ -52,10 +52,23 @@ import java.time.ZoneId
 class SleepMonitoringService : Service() {
 
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
-    private var loop: Job? = null
     private var predictor: TFLiteSleepPredictor? = null
     private var healthManager: SamsungHealthManager? = null
-    private var alarmFired = false
+    @Volatile private var alarmFired = false
+
+    // Prediction is now EVENT-DRIVEN, not timer-driven. A coroutine delay() loop
+    // is frozen by Doze overnight (proven on the 2026-05-24 run: service alive
+    // 12h31m but zero predictions). Instead, a prediction pass runs whenever:
+    //   1. a wear HR batch arrives (WearMessageListener → onWearDataArrived) —
+    //      OS-pushed delivery pierces Doze, and
+    //   2. a Doze-proof AlarmManager TICK fires (setExactAndAllowWhileIdle).
+    // Passes serialize through this mutex so concurrent triggers don't race the
+    // (non-thread-safe) predictor or the lastProcessedEpochEndMs watermark.
+    private val passMutex = Mutex()
+    @Volatile private var windowStartEpochMs = 0L
+    @Volatile private var windowEndEpochMs = 0L
+    @Volatile private var lastProcessedEpochEndMs = 0L
+    private var passCount = 0
 
     private val tickHistory = mutableListOf<StageTick>()
     private var sessionStartedAt: Instant? = null
@@ -67,6 +80,7 @@ class SleepMonitoringService : Service() {
     override fun onCreate() {
         super.onCreate()
         Log.d(TAG, "onCreate")
+        instance = this
         ensureChannel()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             startForeground(
@@ -88,158 +102,187 @@ class SleepMonitoringService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Two entry points: a fresh session start (carries window extras) or a
+        // Doze-proof backstop TICK (action ACTION_TICK, no extras).
+        if (intent?.action == AlarmReceiver.ACTION_TICK) {
+            SessionLog.log(this, "onStartCommand TICK (backstop)")
+            scope.launch { runPredictionPass(source = "tick") }
+            scheduleBackstopTick()
+            return START_STICKY
+        }
+
         val startMin = intent?.getIntExtra(EXTRA_START_MIN, -1) ?: -1
         val endMin = intent?.getIntExtra(EXTRA_END_MIN, -1) ?: -1
         if (startMin < 0 || endMin < 0) {
-            Log.w(TAG, "missing window extras — stopping")
-            stopSelf()
-            return START_NOT_STICKY
+            // Likely a START_STICKY restart with a null intent — no session to resume.
+            SessionLog.log(this, "onStartCommand without window extras (restart?) — idling")
+            return START_STICKY
         }
         val start = LocalTime.of(startMin / 60, startMin % 60)
         val end = LocalTime.of(endMin / 60, endMin % 60)
         SessionLog.reset(this)
         SessionLog.log(this, "onStartCommand window=$start..$end")
 
-        loop?.cancel()
+        val isEmulator = Build.FINGERPRINT.contains("generic", ignoreCase = true) ||
+                Build.MODEL.contains("emulator", ignoreCase = true) ||
+                Build.MODEL.contains("sdk", ignoreCase = true)
+        if (isEmulator) healthManager = null  // Samsung Health not present on emulator
+
+        // Resolve the window's absolute epoch range. Handles cross-midnight
+        // windows (e.g. 23:45→00:15) and rolls the whole window forward to the
+        // next night if it's already fully in the past.
+        val zone = ZoneId.systemDefault()
+        val nowDt = LocalDateTime.now()
+        val today = LocalDate.now()
+        var startDt = today.atTime(start)
+        var endDt = today.atTime(end)
+        if (!end.isAfter(start)) endDt = endDt.plusDays(1)  // window crosses midnight
+        while (endDt.isBefore(nowDt)) {                      // whole window already past → next night
+            startDt = startDt.plusDays(1)
+            endDt = endDt.plusDays(1)
+        }
+        windowStartEpochMs = startDt.atZone(zone).toEpochSecond() * 1000
+        windowEndEpochMs = endDt.atZone(zone).toEpochSecond() * 1000
+        lastProcessedEpochEndMs = 0L
+        passCount = 0
+        alarmFired = false
         sessionStartedAt = Instant.now()
         sessionWindowStart = start
         sessionWindowEnd = end
         tickHistory.clear()
-        // Tell the watch companion to start streaming real-time HR.
-        scope.launch {
-            val ok = WearCommand.startStreaming(this@SleepMonitoringService)
-            SessionLog.log(this@SleepMonitoringService, "WEAR_START sent=$ok")
-        }
-        loop = scope.launch { runLoop(start, end) }
-        return START_REDELIVER_INTENT
-    }
+        SessionLog.log(this, "window resolved: $start..$end " +
+                "(startEpoch=${java.util.Date(windowStartEpochMs)} endEpoch=${java.util.Date(windowEndEpochMs)}) " +
+                "isEmulator=$isEmulator")
 
-    private suspend fun runLoop(start: LocalTime, end: LocalTime) {
-        val isEmulator = Build.FINGERPRINT.contains("generic", ignoreCase = true) ||
-                Build.MODEL.contains("emulator", ignoreCase = true) ||
-                Build.MODEL.contains("sdk", ignoreCase = true)
-        val tickMs = (if (isEmulator) TICK_SEC_DEMO else TICK_SEC_REAL) * 1000L
-        SessionLog.log(this, "loop tick=${tickMs}ms isEmulator=$isEmulator")
-        if (isEmulator) healthManager = null  // Samsung Health not present on emulator
-
-        // Pick the calendar date the window belongs to. If the start time is
-        // already in the past for today (e.g. user starts tracking at 22:30 for
-        // a 06:30 wake window), the window is on tomorrow's date.
-        val today = LocalDate.now()
-        val zone = ZoneId.systemDefault()
-        val windowDate = if (start.isBefore(LocalTime.now())) today.plusDays(1) else today
-        val startEpoch = windowDate.atTime(start).atZone(zone).toEpochSecond() * 1000
-        val endEpoch = windowDate.atTime(end).atZone(zone).toEpochSecond() * 1000
-        SessionLog.log(this, "window resolved: $windowDate $start..$end " +
-                "(startEpoch=${java.util.Date(startEpoch)} endEpoch=${java.util.Date(endEpoch)})")
-
-        // Pre-schedule a hard fallback at window end via AlarmManager. This
-        // alarm survives the service being killed by the OS overnight (Doze,
-        // Samsung battery optimization, OOM). If the loop later detects a
-        // favorable Light moment, it re-schedules the same PendingIntent for
-        // earlier — AlarmManager replaces the old one.
-        if (System.currentTimeMillis() < endEpoch) {
-            AlarmScheduler.scheduleAt(this, endEpoch)
-            SessionLog.log(this, "fallback alarm pre-scheduled for ${java.util.Date(endEpoch)}")
+        // Hard fallback alarm at window end (Doze-proof, independent of this
+        // service). A favorable detection re-schedules it earlier.
+        if (System.currentTimeMillis() < windowEndEpochMs) {
+            AlarmScheduler.scheduleAt(this, windowEndEpochMs)
+            SessionLog.log(this, "fallback alarm pre-scheduled for ${java.util.Date(windowEndEpochMs)}")
         } else {
             SessionLog.log(this, "WARN: endEpoch already in the past — NOT pre-scheduling fallback alarm")
         }
 
         update("Watching for the perfect moment to wake you")
 
-        // We never produce a prediction from synthetic data — only from real
-        // HR samples. The predictor's state advances monotonically with the
-        // sample timestamps we feed in, not with wall-clock ticks. When a
-        // burst arrives covering N minutes, we build N sequential 1-min
-        // epochs from it and let the predictor walk through them in order.
-        var lastProcessedEpochEndMs = 0L
-        var tickNum = 0
-
-        while (scope.isActive && !alarmFired) {
-            tickNum++
-            val now = System.currentTimeMillis()
-            if (now > endEpoch) {
-                SessionLog.log(this, "PAST_WINDOW now=${java.util.Date(now)} > endEpoch — firing fallback alarm")
-                AlarmScheduler.scheduleAt(this, now + 500)
-                alarmFired = true
-                update("Wake-up window ended — alarm firing")
-                withContext(NonCancellable + Dispatchers.IO) {
-                    uploadSession(firedReason = "fallback", firedAt = Instant.now())
-                }
-                break
-            }
-
-            val newEpochs = buildNewEpochsFromRealData(lastProcessedEpochEndMs)
-            if (newEpochs.isEmpty()) {
-                SessionLog.log(this, "tick #$tickNum no new real epochs since " +
-                        "${if (lastProcessedEpochEndMs > 0) java.util.Date(lastProcessedEpochEndMs) else "service-start"} — skipping")
-                delay(tickMs)
-                continue
-            }
-
-            // Feed each new epoch to the predictor in chronological order so the
-            // EMA + hysteresis + 3-consecutive-stable smoothing walks through
-            // the trajectory naturally. Last prediction is what we act on.
-            var lastPred: TFLiteSleepPredictor.SleepPrediction? = null
-            newEpochs.forEach { epoch ->
-                predictor?.addEpoch(epoch.features)
-                if (predictor?.canPredict() == true) {
-                    lastPred = predictor?.predict()
-                    if (lastPred != null) {
-                        tickHistory += StageTick(
-                            t = Instant.ofEpochMilli(epoch.endTimeMs).toString(),
-                            stage = lastPred!!.sleepStage,
-                            conf = lastPred!!.confidence,
-                            stable = lastPred!!.isStable,
-                        )
-                    }
-                }
-                lastProcessedEpochEndMs = epoch.endTimeMs
-            }
-
-            if (lastPred == null) {
-                SessionLog.log(this, "tick #$tickNum processed ${newEpochs.size} epochs, " +
-                        "predictor still warming up (buffer=${predictor?.getBufferSize()})")
-                delay(tickMs)
-                continue
-            }
-
-            val latestEpochAgeMs = now - lastProcessedEpochEndMs
-            val insideWindow = lastProcessedEpochEndMs in startEpoch..endEpoch
-            val fresh = latestEpochAgeMs <= MAX_DATA_AGE_FOR_DECISION_MS
-            // Movement-event counts from the wear accelerometer — observability
-            // only at this stage. Will become a wake gate ("only fire alarm if
-            // user actually moved recently") once we've seen overnight data.
-            val movementLast1m = WearAccelSource.movementEventsInWindow(60_000)
-            val movementLast5m = WearAccelSource.movementEventsInWindow(5 * 60_000)
-            SessionLog.log(
-                this,
-                "tick #$tickNum processed=${newEpochs.size} latestEpoch=${java.util.Date(lastProcessedEpochEndMs)} " +
-                        "age=${latestEpochAgeMs / 60000}min stage=${lastPred!!.sleepStage} " +
-                        "conf=${"%.2f".format(lastPred!!.confidence)} stable=${lastPred!!.isStable} " +
-                        "insideWindow=$insideWindow fresh=$fresh " +
-                        "moves1m=$movementLast1m moves5m=$movementLast5m"
-            )
-
-            val favorable = insideWindow && fresh &&
-                    lastPred!!.sleepStage.equals("Light", ignoreCase = true) &&
-                    lastPred!!.isStable
-            if (favorable) {
-                SessionLog.log(this, "FAVORABLE moment detected — firing alarm now")
-                AlarmScheduler.scheduleAt(this, now + 500)
-                alarmFired = true
-                update("Light sleep detected — gently waking you")
-                withContext(NonCancellable + Dispatchers.IO) {
-                    uploadSession(firedReason = "favorable", firedAt = Instant.now())
-                }
-                break
-            }
-
-            delay(tickMs)
+        // Tell the watch companion to start streaming real-time HR.
+        scope.launch {
+            val ok = WearCommand.startStreaming(this@SleepMonitoringService)
+            SessionLog.log(this@SleepMonitoringService, "WEAR_START sent=$ok")
         }
 
-        SessionLog.log(this, "loop finished (alarmFired=$alarmFired) — stopping service")
-        stopSelf()
+        // First pass now (consume any buffered data) + start the Doze-proof
+        // backstop tick chain.
+        scope.launch { runPredictionPass(source = "initial") }
+        scheduleBackstopTick()
+        return START_REDELIVER_INTENT
+    }
+
+    /** Called by WearMessageListener whenever a fresh HR batch lands. */
+    fun onWearDataArrived(label: String) {
+        scope.launch { runPredictionPass(source = "wear:$label") }
+    }
+
+    private fun scheduleBackstopTick() {
+        if (alarmFired) return
+        val next = System.currentTimeMillis() + BACKSTOP_TICK_MS
+        AlarmScheduler.scheduleTickAt(this, next)
+        SessionLog.log(this, "backstop tick scheduled for ${java.util.Date(next)}")
+    }
+
+    /**
+     * Run ONE prediction pass. Idempotent and mutex-guarded — safe to call
+     * concurrently from the wear push path and the AlarmManager tick path.
+     * Consumes all real epochs accumulated since the last watermark, walks the
+     * predictor through them, fires the alarm on a fresh in-window stable-Light.
+     */
+    private suspend fun runPredictionPass(source: String) = passMutex.withLock {
+        if (alarmFired) return@withLock
+        if (windowEndEpochMs == 0L) {
+            SessionLog.log(this, "pass[$source]: no active session — ignoring")
+            return@withLock
+        }
+        passCount++
+        val now = System.currentTimeMillis()
+
+        if (now > windowEndEpochMs) {
+            SessionLog.log(this, "pass[$source] #$passCount PAST_WINDOW now=${java.util.Date(now)} — firing fallback")
+            AlarmScheduler.scheduleAt(this, now + 500)
+            alarmFired = true
+            AlarmScheduler.cancelTick(this)
+            update("Wake-up window ended — alarm firing")
+            withContext(NonCancellable + Dispatchers.IO) {
+                uploadSession(firedReason = "fallback", firedAt = Instant.now())
+            }
+            stopSelf()
+            return@withLock
+        }
+
+        val newEpochs = buildNewEpochsFromRealData(lastProcessedEpochEndMs)
+        if (newEpochs.isEmpty()) {
+            SessionLog.log(this, "pass[$source] #$passCount no new real epochs since " +
+                    "${if (lastProcessedEpochEndMs > 0) java.util.Date(lastProcessedEpochEndMs) else "service-start"} " +
+                    "(wearBuf=${WearHrSource.bufferSize()} wearLagMin=${WearHrSource.lagMillis() / 60_000})")
+            return@withLock
+        }
+
+        var lastPred: TFLiteSleepPredictor.SleepPrediction? = null
+        val epochFmt = java.text.SimpleDateFormat("HH:mm", java.util.Locale.US)
+        newEpochs.forEach { epoch ->
+            predictor?.addEpoch(epoch.features)
+            if (predictor?.canPredict() == true) {
+                lastPred = predictor?.predict()
+                if (lastPred != null) {
+                    tickHistory += StageTick(
+                        t = Instant.ofEpochMilli(epoch.endTimeMs).toString(),
+                        stage = lastPred!!.sleepStage,
+                        conf = lastPred!!.confidence,
+                        stable = lastPred!!.isStable,
+                    )
+                    // Per-epoch line so backfilled minutes are all visible in the
+                    // log (a morning burst can backfill 60+ epochs — the pass
+                    // summary alone would hide the whole trajectory).
+                    SessionLog.log(this, "  epoch ${epochFmt.format(java.util.Date(epoch.endTimeMs))} " +
+                            "hr=${epoch.hrSampleCount}smp stage=${lastPred!!.sleepStage} " +
+                            "conf=${"%.2f".format(lastPred!!.confidence)} stable=${lastPred!!.isStable}")
+                }
+            }
+            lastProcessedEpochEndMs = epoch.endTimeMs
+        }
+
+        if (lastPred == null) {
+            SessionLog.log(this, "pass[$source] #$passCount processed ${newEpochs.size} epochs, " +
+                    "predictor warming up (buffer=${predictor?.getBufferSize()})")
+            return@withLock
+        }
+
+        val latestEpochAgeMs = now - lastProcessedEpochEndMs
+        val insideWindow = lastProcessedEpochEndMs in windowStartEpochMs..windowEndEpochMs
+        val fresh = latestEpochAgeMs <= MAX_DATA_AGE_FOR_DECISION_MS
+        val moves1m = WearAccelSource.movementEventsInWindow(60_000)
+        val moves5m = WearAccelSource.movementEventsInWindow(5 * 60_000)
+        SessionLog.log(
+            this,
+            "pass[$source] #$passCount processed=${newEpochs.size} latestEpoch=${java.util.Date(lastProcessedEpochEndMs)} " +
+                    "age=${latestEpochAgeMs / 60000}min stage=${lastPred!!.sleepStage} " +
+                    "conf=${"%.2f".format(lastPred!!.confidence)} stable=${lastPred!!.isStable} " +
+                    "insideWindow=$insideWindow fresh=$fresh moves1m=$moves1m moves5m=$moves5m"
+        )
+
+        val favorable = insideWindow && fresh &&
+                lastPred!!.sleepStage.equals("Light", ignoreCase = true) &&
+                lastPred!!.isStable
+        if (favorable) {
+            SessionLog.log(this, "FAVORABLE moment detected — firing alarm now")
+            AlarmScheduler.scheduleAt(this, now + 500)
+            alarmFired = true
+            AlarmScheduler.cancelTick(this)
+            update("Light sleep detected — gently waking you")
+            withContext(NonCancellable + Dispatchers.IO) {
+                uploadSession(firedReason = "favorable", firedAt = Instant.now())
+            }
+            stopSelf()
+        }
     }
 
     /** Cohort of HR samples bucketed into a 1-minute epoch, with predictor-ready features. */
@@ -292,7 +335,9 @@ class SleepMonitoringService : Service() {
     }
 
     override fun onDestroy() {
-        SessionLog.log(this, "onDestroy (alarmFired=$alarmFired)")
+        SessionLog.log(this, "onDestroy (alarmFired=$alarmFired, passes=$passCount)")
+        instance = null
+        AlarmScheduler.cancelTick(this)
         // Tell the watch companion to stop streaming — runs synchronously on a
         // throwaway scope so it actually completes before the process winds down.
         runCatching {
@@ -300,7 +345,6 @@ class SleepMonitoringService : Service() {
                 WearCommand.stopStreaming(this@SleepMonitoringService)
             }
         }
-        loop?.cancel()
         scope.cancel()
         predictor?.close()
         super.onDestroy()
@@ -427,14 +471,22 @@ class SleepMonitoringService : Service() {
         private const val FGS_ID = 2001
         private const val EXTRA_START_MIN = "extra_start_min"
         private const val EXTRA_END_MIN = "extra_end_min"
-        private const val TICK_SEC_REAL = 60L
-        private const val TICK_SEC_DEMO = 10L
         private const val MIN_HR_SAMPLES = 3   // minimum HR samples in an epoch to trust it
         // How old the latest real epoch can be while still firing the alarm.
         // Sleep cycles change on the ~10-20 min scale, so a Light prediction
         // built from data <10 min old is still acting on a defensible read of
         // the user's current state.
         private const val MAX_DATA_AGE_FOR_DECISION_MS = 10L * 60 * 1000
+        // Doze-proof backstop tick cadence. The OS rate-limits
+        // setExactAndAllowWhileIdle to ~once per 9 min in deep Doze, so 5 min is
+        // a request that realistically lands every ~5-9 min — fine as a safety
+        // net behind the wear data-push path (which fires ~every 8 min anyway).
+        private const val BACKSTOP_TICK_MS = 5L * 60 * 1000
+
+        // Live instance so the same-process WearMessageListener can poke a
+        // prediction pass the instant a batch arrives. Null when not running.
+        @Volatile var instance: SleepMonitoringService? = null
+            private set
 
         fun start(context: Context, start: LocalTime, end: LocalTime) {
             val intent = Intent(context, SleepMonitoringService::class.java).apply {
@@ -450,6 +502,28 @@ class SleepMonitoringService : Service() {
 
         fun stop(context: Context) {
             context.stopService(Intent(context, SleepMonitoringService::class.java))
+        }
+
+        /**
+         * Drive a Doze-proof backstop tick. If the service process is alive we
+         * poke it directly; otherwise restart it via startForegroundService (the
+         * alarm broadcast gets a temporary background-FGS-start allowance).
+         */
+        fun triggerTick(context: Context) {
+            val live = instance
+            if (live != null) {
+                live.onWearDataArrived("backstop-tick")
+                live.scheduleBackstopTick()
+            } else {
+                val intent = Intent(context, SleepMonitoringService::class.java).apply {
+                    action = AlarmReceiver.ACTION_TICK
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(intent)
+                } else {
+                    context.startService(intent)
+                }
+            }
         }
     }
 }
