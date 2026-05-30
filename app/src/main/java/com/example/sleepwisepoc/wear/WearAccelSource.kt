@@ -60,6 +60,30 @@ object WearAccelSource {
         }
     }
 
+    /**
+     * Per-epoch accelerometer features for the window [startMs, endMs), matched
+     * to how the model was trained on DREAMT:
+     *   acc_std        = std of gravity-removed magnitude, in g
+     *   acc_move_ratio = fraction of samples above MOVE_THRESH_G
+     *
+     * The watch sends magnitude already gravity-removed in m/s²; we divide by
+     * 9.81 to get g (training used gravity-removed g). Returns (0,0) if too few
+     * samples in the window.
+     */
+    fun accFeaturesForWindow(startMs: Long, endMs: Long): Pair<Float, Float> {
+        val G = 9.81f
+        val MOVE_THRESH_G = 0.02f
+        val inWindow: List<Float>
+        synchronized(lock) {
+            inWindow = samples.filter { it.timestamp in startMs until endMs }.map { it.magnitude / G }
+        }
+        if (inWindow.size < 3) return 0f to 0f
+        val mean = inWindow.average()
+        val std = kotlin.math.sqrt(inWindow.map { (it - mean) * (it - mean) }.average()).toFloat()
+        val moveRatio = inWindow.count { it > MOVE_THRESH_G }.toFloat() / inWindow.size
+        return std to moveRatio
+    }
+
     fun bufferSize(): Int = synchronized(lock) { samples.size }
 
     /** How fresh is the most recent sample. Negative if none. */

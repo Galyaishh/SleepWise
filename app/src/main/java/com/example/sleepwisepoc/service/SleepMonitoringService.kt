@@ -206,13 +206,16 @@ class SleepMonitoringService : Service() {
         val now = System.currentTimeMillis()
 
         if (now > windowEndEpochMs) {
-            SessionLog.log(this, "pass[$source] #$passCount PAST_WINDOW now=${java.util.Date(now)} — firing fallback")
-            AlarmScheduler.scheduleAt(this, now + 500)
+            // The hard fallback alarm was pre-scheduled at windowEndEpochMs and
+            // has ALREADY rung by the time a post-window pass runs — so we must
+            // NOT re-fire here (that caused the double-ring at 09:20). Just clean
+            // up: stop the tick chain, upload the session, stop the service.
+            SessionLog.log(this, "pass[$source] #$passCount PAST_WINDOW now=${java.util.Date(now)} — " +
+                    "fallback already fired at window end; cleaning up")
             alarmFired = true
             AlarmScheduler.cancelTick(this)
-            update("Wake-up window ended — alarm firing")
             withContext(NonCancellable + Dispatchers.IO) {
-                uploadSession(firedReason = "fallback", firedAt = Instant.now())
+                uploadSession(firedReason = "fallback", firedAt = Instant.ofEpochMilli(windowEndEpochMs))
             }
             stopSelf()
             return@withLock
@@ -320,11 +323,12 @@ class SleepMonitoringService : Service() {
             val epochEnd = epochStart + epochSizeMs
             val epochSamples = merged.filter { it.timestamp in epochStart until epochEnd }
             if (epochSamples.size >= MIN_HR_SAMPLES && epochEnd > sinceMs) {
+                val (accStd, accMoveRatio) = WearAccelSource.accFeaturesForWindow(epochStart, epochEnd)
                 out.add(
                     RealEpoch(
                         startTimeMs = epochStart,
                         endTimeMs = epochEnd,
-                        features = featuresFromWearSamples(epochSamples),
+                        features = featuresFromWearSamples(epochSamples, accStd, accMoveRatio),
                         hrSampleCount = epochSamples.size,
                     )
                 )
@@ -360,6 +364,8 @@ class SleepMonitoringService : Service() {
      */
     private fun featuresFromWearSamples(
         samples: List<SamsungHealthManager.HeartRateSample>,
+        accStd: Float = 0f,
+        accMoveRatio: Float = 0f,
     ): TFLiteSleepPredictor.EpochFeatures {
         val bpm = samples.map { it.bpm.toFloat() }.sorted()
         val n = bpm.size
@@ -393,6 +399,8 @@ class SleepMonitoringService : Service() {
             tempMean = 34.0f,       // skin temp not available in real time
             tempStd = 0.0f,
             tempTrend = 0.0f,
+            accStd = accStd,
+            accMoveRatio = accMoveRatio,
         )
     }
 

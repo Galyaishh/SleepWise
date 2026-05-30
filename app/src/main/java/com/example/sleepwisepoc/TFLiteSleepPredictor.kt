@@ -27,7 +27,7 @@ class TFLiteSleepPredictor(private val context: Context) {
         private const val METADATA_FILE = "tflite_metadata.json"
 
         const val SEQUENCE_LENGTH = 5  // 5 epochs = 5 minutes (1-min epochs)
-        const val NUM_FEATURES = 30    // 12 base (9 HR + 3 Temp) + 16 temporal + 2 extra
+        const val NUM_FEATURES = 32    // 30 (as before) + acc_std + acc_move_ratio appended
         const val NUM_CLASSES = 2      // Binary: Deep vs Light
         const val SMOOTHING_WINDOW = 3 // Require 3 consecutive same predictions
 
@@ -86,12 +86,25 @@ class TFLiteSleepPredictor(private val context: Context) {
         // Temperature features (3)
         val tempMean: Float,
         val tempStd: Float,
-        val tempTrend: Float
+        val tempTrend: Float,
+        // Accelerometer movement features (2) — gravity-removed magnitude in g.
+        // Default 0 so older call sites (and the emulator/mock path) still compile;
+        // the live wear path supplies real values.
+        val accStd: Float = 0f,
+        val accMoveRatio: Float = 0f,
     ) {
+        /**
+         * 14-element per-epoch vector: 12 base (9 HR + 3 temp) followed by the 2
+         * accel features. The base 12 keep their original indices (hr_mean=0,
+         * temp_mean=9) so computeTemporalFeatures still finds them; accel sits at
+         * [12],[13] and is appended to the END of the final 32-vector to match
+         * the training feature order (acc_std=30, acc_move_ratio=31).
+         */
         fun toFloatArray(): FloatArray {
             return floatArrayOf(
                 hrMean, hrStd, hrMin, hrMax, hrRange, hrCv, hrMedian, hrIqr, hrSkew,
-                tempMean, tempStd, tempTrend
+                tempMean, tempStd, tempTrend,
+                accStd, accMoveRatio,
             )
         }
     }
@@ -198,9 +211,11 @@ class TFLiteSleepPredictor(private val context: Context) {
 
         val result = mutableListOf<Float>()
 
-        // Add base features from latest epoch (12 features)
+        // Add the 12 base HR+temp features from the latest epoch. The epoch
+        // vector is now 14 (acc at [12],[13]) — take only the first 12 here so
+        // the temporal block keeps its original layout; accel is appended last.
         val latestEpoch = epochBuffer.last()
-        result.addAll(latestEpoch.toList())
+        result.addAll(latestEpoch.take(12))
 
         // Compute temporal features for key features (HR and Temp only)
         val keyFeatureIndices = listOf(hrMeanIdx, tempMeanIdx)
@@ -249,6 +264,11 @@ class TFLiteSleepPredictor(private val context: Context) {
         // Sleep cycle position (simplified - based on buffer position)
         val sleepCyclePosition = (epochBuffer.size % 90) / 90f
         result.add(sleepCyclePosition)
+
+        // Accelerometer features appended LAST (indices 30, 31) to match the
+        // training feature order (acc_std, acc_move_ratio).
+        result.add(latestEpoch[12])  // acc_std
+        result.add(latestEpoch[13])  // acc_move_ratio
 
         return result.toFloatArray()
     }
