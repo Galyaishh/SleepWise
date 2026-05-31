@@ -111,47 +111,52 @@ class SleepMonitoringService : Service() {
             return START_STICKY
         }
 
-        val startMin = intent?.getIntExtra(EXTRA_START_MIN, -1) ?: -1
-        val endMin = intent?.getIntExtra(EXTRA_END_MIN, -1) ?: -1
-        if (startMin < 0 || endMin < 0) {
-            // Likely a START_STICKY restart with a null intent — no session to resume.
-            SessionLog.log(this, "onStartCommand without window extras (restart?) — idling")
+        // Window is resolved to ABSOLUTE epoch ms at tap time (in the companion
+        // start()) and passed in — so a START_REDELIVER restart carries the same
+        // absolute window rather than re-resolving (which used to roll a
+        // just-finished window forward to tomorrow → phantom session).
+        val startEpoch = intent?.getLongExtra(EXTRA_START_EPOCH, -1L) ?: -1L
+        val endEpoch = intent?.getLongExtra(EXTRA_END_EPOCH, -1L) ?: -1L
+        if (startEpoch < 0 || endEpoch < 0) {
+            SessionLog.log(this, "onStartCommand without window epochs (restart w/ null intent?) — idling")
             return START_STICKY
         }
-        val start = LocalTime.of(startMin / 60, startMin % 60)
-        val end = LocalTime.of(endMin / 60, endMin % 60)
-        SessionLog.reset(this)
-        SessionLog.log(this, "onStartCommand window=$start..$end")
+        val now = System.currentTimeMillis()
+
+        // Stale-restart guard: if the window already ended, this is the OS
+        // redelivering a finished session's intent. Do NOT reset the log or
+        // re-arm anything — just stop. (This is what created the phantom
+        // tomorrow-session after the mem-pressure crash.)
+        if (now > endEpoch + STALE_RESTART_GRACE_MS) {
+            SessionLog.log(this, "stale restart: window ended ${java.util.Date(endEpoch)} — stopping, not re-arming")
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
+        // Live-redeliver guard: same window we're already running → don't wipe state.
+        if (endEpoch == windowEndEpochMs && windowEndEpochMs != 0L) {
+            SessionLog.log(this, "redeliver of active window — ignoring (no reset)")
+            return START_REDELIVER_INTENT
+        }
+
+        SessionLog.reset(this)   // rotates previous to session_prev.log
 
         val isEmulator = Build.FINGERPRINT.contains("generic", ignoreCase = true) ||
                 Build.MODEL.contains("emulator", ignoreCase = true) ||
                 Build.MODEL.contains("sdk", ignoreCase = true)
         if (isEmulator) healthManager = null  // Samsung Health not present on emulator
 
-        // Resolve the window's absolute epoch range. Handles cross-midnight
-        // windows (e.g. 23:45→00:15) and rolls the whole window forward to the
-        // next night if it's already fully in the past.
-        val zone = ZoneId.systemDefault()
-        val nowDt = LocalDateTime.now()
-        val today = LocalDate.now()
-        var startDt = today.atTime(start)
-        var endDt = today.atTime(end)
-        if (!end.isAfter(start)) endDt = endDt.plusDays(1)  // window crosses midnight
-        while (endDt.isBefore(nowDt)) {                      // whole window already past → next night
-            startDt = startDt.plusDays(1)
-            endDt = endDt.plusDays(1)
-        }
-        windowStartEpochMs = startDt.atZone(zone).toEpochSecond() * 1000
-        windowEndEpochMs = endDt.atZone(zone).toEpochSecond() * 1000
+        windowStartEpochMs = startEpoch
+        windowEndEpochMs = endEpoch
         lastProcessedEpochEndMs = 0L
         passCount = 0
         alarmFired = false
         sessionStartedAt = Instant.now()
-        sessionWindowStart = start
-        sessionWindowEnd = end
+        sessionWindowStart = LocalDateTime.ofInstant(Instant.ofEpochMilli(startEpoch), ZoneId.systemDefault()).toLocalTime()
+        sessionWindowEnd = LocalDateTime.ofInstant(Instant.ofEpochMilli(endEpoch), ZoneId.systemDefault()).toLocalTime()
         tickHistory.clear()
-        SessionLog.log(this, "window resolved: $start..$end " +
-                "(startEpoch=${java.util.Date(windowStartEpochMs)} endEpoch=${java.util.Date(windowEndEpochMs)}) " +
+        SessionLog.log(this, "onStartCommand window resolved: " +
+                "startEpoch=${java.util.Date(windowStartEpochMs)} endEpoch=${java.util.Date(windowEndEpochMs)} " +
                 "isEmulator=$isEmulator")
 
         // Hard fallback alarm at window end (Doze-proof, independent of this
@@ -477,8 +482,11 @@ class SleepMonitoringService : Service() {
         const val TAG = "SleepMonitoring"
         private const val CHANNEL_ID = "sleep_monitoring"
         private const val FGS_ID = 2001
-        private const val EXTRA_START_MIN = "extra_start_min"
-        private const val EXTRA_END_MIN = "extra_end_min"
+        private const val EXTRA_START_EPOCH = "extra_start_epoch"
+        private const val EXTRA_END_EPOCH = "extra_end_epoch"
+        // A redelivered intent whose window ended more than this long ago is a
+        // stale OS restart of a finished session — stop instead of re-arming.
+        private const val STALE_RESTART_GRACE_MS = 5L * 60 * 1000
         private const val MIN_HR_SAMPLES = 3   // minimum HR samples in an epoch to trust it
         // How old the latest real epoch can be while still firing the alarm.
         // Sleep cycles change on the ~10-20 min scale, so a Light prediction
@@ -497,9 +505,23 @@ class SleepMonitoringService : Service() {
             private set
 
         fun start(context: Context, start: LocalTime, end: LocalTime) {
+            // Resolve the window to ABSOLUTE epoch ms NOW (at tap time), handling
+            // cross-midnight and rolling forward to the next occurrence if the
+            // window already passed today. Passing absolute epochs means a later
+            // OS restart can't re-resolve them into a different day.
+            val zone = ZoneId.systemDefault()
+            val nowDt = LocalDateTime.now()
+            val today = LocalDate.now()
+            var startDt = today.atTime(start)
+            var endDt = today.atTime(end)
+            if (!end.isAfter(start)) endDt = endDt.plusDays(1)  // crosses midnight
+            while (endDt.isBefore(nowDt)) {                      // whole window already past → next day
+                startDt = startDt.plusDays(1)
+                endDt = endDt.plusDays(1)
+            }
             val intent = Intent(context, SleepMonitoringService::class.java).apply {
-                putExtra(EXTRA_START_MIN, start.hour * 60 + start.minute)
-                putExtra(EXTRA_END_MIN, end.hour * 60 + end.minute)
+                putExtra(EXTRA_START_EPOCH, startDt.atZone(zone).toEpochSecond() * 1000)
+                putExtra(EXTRA_END_EPOCH, endDt.atZone(zone).toEpochSecond() * 1000)
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)

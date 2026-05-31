@@ -25,11 +25,23 @@ object SessionLog {
     private const val FILE_NAME = "session.log"
     private val timeFmt = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US)
 
-    /** Wipe the file. Call at session start so each session is a fresh log. */
+    private const val PREV_FILE_NAME = "session_prev.log"
+
+    /**
+     * Start a fresh log for a new session, but ROTATE the previous one to
+     * session_prev.log first so a crash-restart (which re-enters onStartCommand)
+     * can never destroy the prior night's record. Pull both with:
+     *   adb shell run-as <pkg> cat files/session.log
+     *   adb shell run-as <pkg> cat files/session_prev.log
+     */
     fun reset(ctx: Context) {
         runCatching {
-            File(ctx.filesDir, FILE_NAME).writeText("")
-            log(ctx, "===== session log reset =====")
+            val cur = File(ctx.filesDir, FILE_NAME)
+            if (cur.exists() && cur.length() > 0) {
+                cur.copyTo(File(ctx.filesDir, PREV_FILE_NAME), overwrite = true)
+            }
+            cur.writeText("")
+            log(ctx, "===== session log reset (previous rotated to $PREV_FILE_NAME) =====")
         }
     }
 
