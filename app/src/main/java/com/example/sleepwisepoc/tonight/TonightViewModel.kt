@@ -181,7 +181,11 @@ class TonightViewModel(application: Application) : AndroidViewModel(application)
             runCatching {
                 val predictions = runRetrospectiveInference(mgr)
                 compareWithSamsungStages(mgr, predictions)
-                uploadRetrospectiveAsGoodRun(mgr, predictions)
+                // NOTE: uploadRetrospectiveAsGoodRun(mgr, predictions) intentionally
+                // DISABLED — it injected a synthetic session into the backend on
+                // every app open (with a malformed afternoon window → negative
+                // "time in bed"). Real sessions come only from a completed
+                // monitoring run. Keep the retrospective LOGGING for debugging.
             }
         } catch (t: Throwable) {
             Log.w(TAG, "DIAG failed: ${t.message}", t)

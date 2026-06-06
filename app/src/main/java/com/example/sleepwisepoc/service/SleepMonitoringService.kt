@@ -413,15 +413,15 @@ class SleepMonitoringService : Service() {
 
     private suspend fun uploadSession(firedReason: String, firedAt: Instant) {
         val started = sessionStartedAt ?: return
-        val winStart = sessionWindowStart ?: return
-        val winEnd = sessionWindowEnd ?: return
-        val zone = ZoneId.systemDefault()
-        val today = LocalDate.now()
 
+        // Use the ABSOLUTE window epochs resolved at tap time, not today.atTime(...).
+        // The old code recomputed the window from LocalTime + LocalDate.now(), which
+        // for an afternoon test of an early-morning window produced window_start in
+        // the past and started_at in the afternoon → negative "time in bed".
         val payload = SessionUpload(
             user_id = FirebaseAuth.getInstance().currentUser?.uid ?: "unknown",
-            window_start = today.atTime(winStart).atZone(zone).toInstant().toString(),
-            window_end = today.atTime(winEnd).atZone(zone).toInstant().toString(),
+            window_start = Instant.ofEpochMilli(windowStartEpochMs).toString(),
+            window_end = Instant.ofEpochMilli(windowEndEpochMs).toString(),
             started_at = started.toString(),
             ended_at = Instant.now().toString(),
             fired_at = firedAt.toString(),

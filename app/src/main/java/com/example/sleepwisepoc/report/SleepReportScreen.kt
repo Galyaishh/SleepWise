@@ -238,33 +238,49 @@ fun SleepReportScreen(
 
 @Composable
 private fun NightPager(report: WeeklyReport, isDemoData: Boolean, onRefresh: () -> Unit) {
+    val zone = ZoneId.systemDefault()
     val sessions = report.sessions
     if (sessions.isEmpty()) { EmptyView(); return }
 
-    var currentPage by remember { mutableStateOf(0) }
-    val scope = rememberCoroutineScope()
+    // Map each session to the calendar date you WOKE UP on (ended_at local date),
+    // so a night is filed under its morning.
+    val byDate = remember(sessions) {
+        sessions.mapNotNull { s ->
+            runCatching { Instant.parse(s.ended_at).atZone(zone).toLocalDate() }.getOrNull()?.let { it to s }
+        }.toMap()
+    }
+    // Day slots: today back to the oldest recorded night, so gaps AND empty days
+    // (incl. today before tonight's run) are navigable.
+    val today  = java.time.LocalDate.now(zone)
+    val oldest = byDate.keys.minOrNull() ?: today
+    val days = remember(byDate) {
+        val span = java.time.temporal.ChronoUnit.DAYS.between(oldest, today).toInt().coerceAtLeast(0)
+        (0..span).map { today.minusDays(it.toLong()) }   // index 0 = today (newest)
+    }
+    // Open on the most recent day that actually has data.
+    var currentPage by remember(days) {
+        mutableStateOf(days.indexOfFirst { byDate.containsKey(it) }.coerceAtLeast(0))
+    }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        // ── Top bar ────────────────────────────────────────────────────────────
         Spacer(Modifier.height(8.dp))
         Row(
             modifier          = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            // ◁ older
             IconButton(
-                onClick = { if (currentPage < sessions.lastIndex) currentPage++ },
-                enabled = currentPage < sessions.lastIndex,
+                onClick = { if (currentPage < days.lastIndex) currentPage++ },
+                enabled = currentPage < days.lastIndex,
             ) {
                 Icon(
                     Icons.Rounded.ChevronLeft, null,
-                    tint = if (currentPage < sessions.lastIndex) NightTextPrimary else NightTextSecondary.copy(0.3f),
+                    tint = if (currentPage < days.lastIndex) NightTextPrimary else NightTextSecondary.copy(0.3f),
                 )
             }
 
-            // Date label
-            val zone    = ZoneId.systemDefault()
-            val instant = runCatching { Instant.parse(sessions[currentPage].started_at) }.getOrNull()
-            val dateStr = instant?.atZone(zone)?.format(DateHeaderFmt) ?: "—"
+            val day     = days[currentPage]
+            val dateStr = if (day == today) "Today" else day.format(DateHeaderFmt)
             Text(
                 dateStr,
                 modifier   = Modifier.weight(1f),
@@ -274,6 +290,7 @@ private fun NightPager(report: WeeklyReport, isDemoData: Boolean, onRefresh: () 
                 color      = NightTextPrimary,
             )
 
+            // ▷ newer
             IconButton(
                 onClick = { if (currentPage > 0) currentPage-- },
                 enabled = currentPage > 0,
@@ -289,7 +306,6 @@ private fun NightPager(report: WeeklyReport, isDemoData: Boolean, onRefresh: () 
             }
         }
 
-        // ── Demo notice ────────────────────────────────────────────────────────
         if (isDemoData) {
             Row(
                 modifier = Modifier
@@ -302,20 +318,37 @@ private fun NightPager(report: WeeklyReport, isDemoData: Boolean, onRefresh: () 
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Text("✦", fontSize = 10.sp, color = NightPrimary)
-                Text(
-                    "Demo data — connect your watch for real nights",
-                    fontSize = 11.sp,
-                    color    = NightTextSecondary,
-                )
+                Text("Demo data — connect your watch for real nights",
+                    fontSize = 11.sp, color = NightTextSecondary)
             }
         }
 
-        // ── Page content ───────────────────────────────────────────────────────
-        NightPage(
-            session   = sessions[currentPage],
-            sessions  = sessions,
-            modifier  = Modifier.weight(1f),
-        )
+        // Page content: the day's night, or an empty state if nothing was tracked.
+        val session = byDate[days[currentPage]]
+        if (session != null) {
+            NightPage(session = session, sessions = sessions, modifier = Modifier.weight(1f))
+        } else {
+            EmptyDay(modifier = Modifier.weight(1f))
+        }
+    }
+}
+
+@Composable
+private fun EmptyDay(modifier: Modifier = Modifier) {
+    Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(
+            modifier            = Modifier.padding(40.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text("😴", fontSize = 48.sp)
+            Spacer(Modifier.height(16.dp))
+            Text("No sleep tracked", fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = NightTextPrimary)
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "Nothing recorded for this night.",
+                fontSize = 13.sp, color = NightTextSecondary, textAlign = TextAlign.Center,
+            )
+        }
     }
 }
 
@@ -343,7 +376,9 @@ private fun NightPage(
     val winEndStr   = winEnd?.atZone(zone)?.format(TimeFmt12)          ?: "—"
 
     val timeInBedMins = if (bedInstant != null && wakeInstant != null)
-        Duration.between(bedInstant, wakeInstant).toMinutes()
+        // Clamp: never render negative time-in-bed (a malformed session whose
+        // started_at is after ended_at would otherwise show "minus minutes").
+        Duration.between(bedInstant, wakeInstant).toMinutes().coerceAtLeast(0)
     else durations.totalMins
 
     Column(
