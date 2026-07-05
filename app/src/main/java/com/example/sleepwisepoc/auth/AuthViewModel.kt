@@ -5,6 +5,7 @@ import android.content.Context
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.sleepwisepoc.DeviceRepository
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.GoogleAuthProvider
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -56,6 +57,9 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                         userEmail = firebaseUser.email.orEmpty(),
                     )
                 }
+                viewModelScope.launch {
+                    DeviceRepository.ensureRegistered(getApplication())
+                }
             } else {
                 _state.update { it.copy(screen = AppRoute.ONBOARDING) }
             }
@@ -82,6 +86,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                         userEmail = user.email.orEmpty(),
                     )
                 }
+                DeviceRepository.ensureRegistered(getApplication())
             } catch (t: Throwable) {
                 Log.w(TAG, "Google sign-in failed: ${t.message}", t)
                 _state.update { it.copy(isLoading = false, error = t.message ?: "Sign-in failed") }
@@ -103,6 +108,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                         userEmail = user.email.orEmpty(),
                     )
                 }
+                DeviceRepository.ensureRegistered(getApplication())
             } catch (t: Throwable) {
                 Log.w(TAG, "email sign-in failed: ${t.message}", t)
                 val msg = t.message.orEmpty()
@@ -131,6 +137,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                         userEmail = user.email.orEmpty(),
                     )
                 }
+                DeviceRepository.ensureRegistered(getApplication())
             } catch (t: Throwable) {
                 Log.w(TAG, "email sign-up failed: ${t.message}", t)
                 val msg = t.message.orEmpty()

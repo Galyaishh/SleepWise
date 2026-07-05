@@ -5,8 +5,8 @@ import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.sleepwisepoc.ApiClient
+import com.example.sleepwisepoc.DeviceRepository
 import com.example.sleepwisepoc.WeeklyReport
-import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -33,9 +33,9 @@ class SleepReportViewModel(application: Application) : AndroidViewModel(applicat
         _state.update { ReportUiState.Loading }
         viewModelScope.launch {
             try {
-                val userId = FirebaseAuth.getInstance().currentUser?.uid
+                val userId = DeviceRepository.cachedUserId()
                 if (userId == null) {
-                    Log.w(TAG, "no Firebase user — showing demo data")
+                    Log.w(TAG, "no device token yet — showing demo data")
                     _state.update { ReportUiState.Loaded(SleepMockData.createReport(), isDemoData = true) }
                     return@launch
                 }

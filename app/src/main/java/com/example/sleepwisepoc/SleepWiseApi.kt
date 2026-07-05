@@ -1,9 +1,6 @@
 package com.example.sleepwisepoc
 
 import android.util.Log
-import com.google.firebase.auth.FirebaseAuth
-import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.tasks.await
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
@@ -64,11 +61,19 @@ data class HealthCheckResponse(
     val sessions_stored: Int,
 )
 
+data class DeviceRegisterResponse(
+    val user_id: String,
+    val token: String,
+)
+
 // ─── API surface ─────────────────────────────────────────────────────────────
 
 interface SleepWiseApi {
     @GET("/")
     suspend fun health(): HealthCheckResponse
+
+    @POST("/devices/register")
+    suspend fun registerDevice(): DeviceRegisterResponse
 
     @GET("/me")
     suspend fun whoami(): Map<String, String>
@@ -92,19 +97,8 @@ object ApiClient {
     const val EMULATOR_BASE_URL = "http://10.0.2.2:5000/"
     const val PROD_BASE_URL = "https://sleepwise-backend-8kvx.onrender.com/"
 
-    /**
-     * Pulls a fresh Firebase ID token before every request. Firebase caches
-     * the token for ~1h; .getIdToken(false) returns cached if still valid,
-     * otherwise refreshes — so this is cheap on the hot path.
-     */
     private val authInterceptor = Interceptor { chain ->
-        val user = FirebaseAuth.getInstance().currentUser
-        val token: String? = user?.let {
-            runCatching {
-                runBlocking { it.getIdToken(false).await().token }
-            }.onFailure { Log.w(TAG, "Firebase ID token fetch failed: ${it.message}") }
-                .getOrNull()
-        }
+        val token = DeviceRepository.cachedToken()
         val req = if (token != null) {
             chain.request().newBuilder()
                 .header("Authorization", "Bearer $token")
