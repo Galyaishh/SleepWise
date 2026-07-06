@@ -23,12 +23,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
-import com.example.sleepwisepoc.ui.theme.NightBorder
-import com.example.sleepwisepoc.ui.theme.NightPrimary
-import com.example.sleepwisepoc.ui.theme.NightSurface
-import com.example.sleepwisepoc.ui.theme.NightSurface2
-import com.example.sleepwisepoc.ui.theme.NightTextPrimary
-import com.example.sleepwisepoc.ui.theme.NightTextSecondary
+import com.example.sleepwisepoc.ui.theme.LocalSleepColors
 import java.time.LocalTime
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -38,6 +33,7 @@ fun SleepTimePickerDialog(
     onConfirm: (LocalTime) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val c = LocalSleepColors.current
     val state = rememberTimePickerState(
         initialHour = initialTime.hour,
         initialMinute = initialTime.minute,
@@ -48,7 +44,7 @@ fun SleepTimePickerDialog(
         Column(
             modifier = Modifier
                 .clip(RoundedCornerShape(28.dp))
-                .background(NightSurface)
+                .background(c.surface)
                 .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
@@ -56,7 +52,7 @@ fun SleepTimePickerDialog(
                 text = "Select wake-up time",
                 fontSize = 14.sp,
                 fontWeight = FontWeight.SemiBold,
-                color = NightTextSecondary,
+                color = c.textSecondary,
                 letterSpacing = 0.5.sp,
             )
 
@@ -65,20 +61,20 @@ fun SleepTimePickerDialog(
             TimePicker(
                 state = state,
                 colors = TimePickerDefaults.colors(
-                    clockDialColor          = NightSurface2,
-                    clockDialSelectedContentColor = NightTextPrimary,
-                    clockDialUnselectedContentColor = NightTextSecondary,
-                    selectorColor           = NightPrimary,
-                    containerColor          = NightSurface,
-                    periodSelectorBorderColor = NightBorder,
-                    periodSelectorSelectedContainerColor = NightPrimary,
-                    periodSelectorUnselectedContainerColor = NightSurface2,
-                    periodSelectorSelectedContentColor = NightTextPrimary,
-                    periodSelectorUnselectedContentColor = NightTextSecondary,
-                    timeSelectorSelectedContainerColor = NightPrimary,
-                    timeSelectorUnselectedContainerColor = NightSurface2,
-                    timeSelectorSelectedContentColor = NightTextPrimary,
-                    timeSelectorUnselectedContentColor = NightTextSecondary,
+                    clockDialColor          = c.surface2,
+                    clockDialSelectedContentColor = c.textPrimary,
+                    clockDialUnselectedContentColor = c.textSecondary,
+                    selectorColor           = c.primary,
+                    containerColor          = c.surface,
+                    periodSelectorBorderColor = c.border,
+                    periodSelectorSelectedContainerColor = c.primary,
+                    periodSelectorUnselectedContainerColor = c.surface2,
+                    periodSelectorSelectedContentColor = c.textPrimary,
+                    periodSelectorUnselectedContentColor = c.textSecondary,
+                    timeSelectorSelectedContainerColor = c.primary,
+                    timeSelectorUnselectedContainerColor = c.surface2,
+                    timeSelectorSelectedContentColor = c.textPrimary,
+                    timeSelectorUnselectedContentColor = c.textSecondary,
                 ),
             )
 
@@ -89,14 +85,14 @@ fun SleepTimePickerDialog(
                 horizontalArrangement = Arrangement.End,
             ) {
                 TextButton(onClick = onDismiss) {
-                    Text("Cancel", color = NightTextSecondary, fontSize = 14.sp)
+                    Text("Cancel", color = c.textSecondary, fontSize = 14.sp)
                 }
                 TextButton(
                     onClick = {
                         onConfirm(LocalTime.of(state.hour, state.minute))
                     }
                 ) {
-                    Text("Confirm", color = NightPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                    Text("Confirm", color = c.primary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
         }

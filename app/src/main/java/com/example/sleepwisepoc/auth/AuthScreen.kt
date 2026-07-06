@@ -52,20 +52,14 @@ import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.sleepwisepoc.R
-import com.example.sleepwisepoc.ui.theme.NightBg
-import com.example.sleepwisepoc.ui.theme.NightBorder
-import com.example.sleepwisepoc.ui.theme.NightPrimary
-import com.example.sleepwisepoc.ui.theme.NightPrimaryEnd
-import com.example.sleepwisepoc.ui.theme.NightSurface
-import com.example.sleepwisepoc.ui.theme.NightSurface2
-import com.example.sleepwisepoc.ui.theme.NightTextPrimary
-import com.example.sleepwisepoc.ui.theme.NightTextSecondary
+import com.example.sleepwisepoc.ui.theme.LocalSleepColors
 import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import kotlinx.coroutines.launch
 
 @Composable
 fun AuthScreen(viewModel: AuthViewModel = viewModel()) {
+    val c = LocalSleepColors.current
     val state by viewModel.state.collectAsState()
     var showEmailForm by remember { mutableStateOf(false) }
     var isSignUp by remember { mutableStateOf(false) }
@@ -126,8 +120,8 @@ fun AuthScreen(viewModel: AuthViewModel = viewModel()) {
                 Brush.verticalGradient(
                     colorStops = arrayOf(
                         0f to Color(0xFF0D0F22),
-                        0.45f to NightBg,
-                        1f to NightBg,
+                        0.45f to c.bg,
+                        1f to c.bg,
                     )
                 )
             )
@@ -147,21 +141,21 @@ fun AuthScreen(viewModel: AuthViewModel = viewModel()) {
                 "SleepWise",
                 fontSize = 32.sp,
                 fontWeight = FontWeight.Bold,
-                color = NightTextPrimary,
+                color = c.textPrimary,
                 letterSpacing = (-0.5).sp,
             )
             Spacer(Modifier.height(8.dp))
             Text(
                 "Your intelligent sleep companion",
                 fontSize = 15.sp,
-                color = NightTextSecondary,
+                color = c.textSecondary,
                 textAlign = TextAlign.Center,
             )
 
             Spacer(Modifier.weight(1f))
 
             if (state.isLoading) {
-                CircularProgressIndicator(color = NightPrimary, modifier = Modifier.size(40.dp))
+                CircularProgressIndicator(color = c.primary, modifier = Modifier.size(40.dp))
             } else if (!showEmailForm) {
                 // Google button
                 AuthButton(
@@ -172,12 +166,12 @@ fun AuthScreen(viewModel: AuthViewModel = viewModel()) {
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        Text("G", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = NightTextPrimary)
+                        Text("G", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = c.textPrimary)
                         Text(
                             "Continue with Google",
                             fontSize = 16.sp,
                             fontWeight = FontWeight.SemiBold,
-                            color = NightTextPrimary,
+                            color = c.textPrimary,
                         )
                     }
                 }
@@ -190,9 +184,9 @@ fun AuthScreen(viewModel: AuthViewModel = viewModel()) {
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    HorizontalDivider(modifier = Modifier.weight(1f), color = NightBorder)
-                    Text("or", fontSize = 13.sp, color = NightTextSecondary)
-                    HorizontalDivider(modifier = Modifier.weight(1f), color = NightBorder)
+                    HorizontalDivider(modifier = Modifier.weight(1f), color = c.border)
+                    Text("or", fontSize = 13.sp, color = c.textSecondary)
+                    HorizontalDivider(modifier = Modifier.weight(1f), color = c.border)
                 }
 
                 Spacer(Modifier.height(12.dp))
@@ -206,7 +200,7 @@ fun AuthScreen(viewModel: AuthViewModel = viewModel()) {
                         "Continue with Email",
                         fontSize = 16.sp,
                         fontWeight = FontWeight.Medium,
-                        color = NightTextPrimary,
+                        color = c.textPrimary,
                     )
                 }
             } else {
@@ -216,7 +210,7 @@ fun AuthScreen(viewModel: AuthViewModel = viewModel()) {
                         text = if (isSignUp) "Create Account" else "Sign In",
                         fontSize = 20.sp,
                         fontWeight = FontWeight.Bold,
-                        color = NightTextPrimary,
+                        color = c.textPrimary,
                         textAlign = TextAlign.Center,
                         modifier = Modifier.fillMaxWidth(),
                     )
@@ -258,14 +252,14 @@ fun AuthScreen(viewModel: AuthViewModel = viewModel()) {
                             if (isSignUp) "Create Account" else "Sign In",
                             fontSize = 16.sp,
                             fontWeight = FontWeight.SemiBold,
-                            color = NightTextPrimary,
+                            color = c.textPrimary,
                         )
                     }
 
                     Text(
                         text = if (isSignUp) "Already have an account? Sign In" else "New here? Create account",
                         fontSize = 14.sp,
-                        color = NightPrimary,
+                        color = c.primary,
                         textAlign = TextAlign.Center,
                         modifier = Modifier
                             .fillMaxWidth()
@@ -279,7 +273,7 @@ fun AuthScreen(viewModel: AuthViewModel = viewModel()) {
                     Text(
                         text = "← Back",
                         fontSize = 14.sp,
-                        color = NightTextSecondary,
+                        color = c.textSecondary,
                         modifier = Modifier
                             .clickable {
                                 showEmailForm = false
@@ -313,7 +307,7 @@ fun AuthScreen(viewModel: AuthViewModel = viewModel()) {
             Text(
                 text = "Your sleep data belongs to you.\nWe never share or sell it.",
                 fontSize = 12.sp,
-                color = NightTextSecondary.copy(alpha = 0.6f),
+                color = c.textSecondary.copy(alpha = 0.6f),
                 textAlign = TextAlign.Center,
                 lineHeight = 18.sp,
             )
@@ -337,14 +331,15 @@ private fun AuthButton(
     isPrimary: Boolean,
     content: @Composable () -> Unit,
 ) {
+    val c = LocalSleepColors.current
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .height(58.dp)
             .clip(RoundedCornerShape(50))
             .then(
-                if (isPrimary) Modifier.background(Brush.horizontalGradient(listOf(NightPrimary, NightPrimaryEnd)))
-                else Modifier.background(NightSurface).border(1.dp, NightBorder, RoundedCornerShape(50))
+                if (isPrimary) Modifier.background(Brush.horizontalGradient(listOf(c.primary, c.primaryEnd)))
+                else Modifier.background(c.surface).border(1.dp, c.border, RoundedCornerShape(50))
             )
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
@@ -363,23 +358,24 @@ private fun SleepTextField(
     isPassword: Boolean = false,
     onImeAction: () -> Unit = {},
 ) {
+    val c = LocalSleepColors.current
     OutlinedTextField(
         value = value,
         onValueChange = onValueChange,
-        placeholder = { Text(placeholder, color = NightTextSecondary) },
+        placeholder = { Text(placeholder, color = c.textSecondary) },
         singleLine = true,
         visualTransformation = if (isPassword) PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,
         keyboardOptions = KeyboardOptions(keyboardType = keyboardType, imeAction = imeAction),
         keyboardActions = KeyboardActions(onAny = { onImeAction() }),
         shape = RoundedCornerShape(16.dp),
         colors = OutlinedTextFieldDefaults.colors(
-            focusedBorderColor = NightPrimary,
-            unfocusedBorderColor = NightBorder,
-            focusedTextColor = NightTextPrimary,
-            unfocusedTextColor = NightTextPrimary,
-            cursorColor = NightPrimary,
-            focusedContainerColor = NightSurface2,
-            unfocusedContainerColor = NightSurface,
+            focusedBorderColor = c.primary,
+            unfocusedBorderColor = c.border,
+            focusedTextColor = c.textPrimary,
+            unfocusedTextColor = c.textPrimary,
+            cursorColor = c.primary,
+            focusedContainerColor = c.surface2,
+            unfocusedContainerColor = c.surface,
         ),
         modifier = Modifier.fillMaxWidth(),
     )

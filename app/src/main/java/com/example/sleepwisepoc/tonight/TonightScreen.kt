@@ -63,16 +63,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.sleepwisepoc.ui.theme.NightBg
-import com.example.sleepwisepoc.ui.theme.NightBorder
-import com.example.sleepwisepoc.ui.theme.NightPrimary
-import com.example.sleepwisepoc.ui.theme.NightPrimaryEnd
-import com.example.sleepwisepoc.ui.theme.NightSuccess
-import com.example.sleepwisepoc.ui.theme.NightSurface
-import com.example.sleepwisepoc.ui.theme.NightSurface2
-import com.example.sleepwisepoc.ui.theme.NightTextAccent
-import com.example.sleepwisepoc.ui.theme.NightTextPrimary
-import com.example.sleepwisepoc.ui.theme.NightTextSecondary
+import com.example.sleepwisepoc.ui.theme.LocalSleepColors
 import java.time.format.DateTimeFormatter
 
 private val TimeFmt = DateTimeFormatter.ofPattern("hh:mm a")
@@ -96,6 +87,7 @@ fun TonightScreen(
     modifier: Modifier = Modifier,
     viewModel: TonightViewModel = viewModel(),
 ) {
+    val c = LocalSleepColors.current
     val state by viewModel.state.collectAsState()
     val context = LocalContext.current
     var showNoWatchDialog by remember { mutableStateOf(false) }
@@ -134,8 +126,8 @@ fun TonightScreen(
                     Brush.verticalGradient(
                         colorStops = arrayOf(
                             0.0f to Color(0xFF0D0F22),
-                            0.4f to NightBg,
-                            1.0f to NightBg,
+                            0.4f to c.bg,
+                            1.0f to c.bg,
                         )
                     )
                 )
@@ -158,19 +150,19 @@ fun TonightScreen(
                         text = "SleepWise",
                         fontSize = 18.sp,
                         fontWeight = FontWeight.SemiBold,
-                        color = NightTextPrimary,
+                        color = c.textPrimary,
                     )
                     Box(
                         modifier = Modifier
                             .size(40.dp)
                             .clip(CircleShape)
-                            .background(NightSurface),
+                            .background(c.surface),
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(
                             imageVector = Icons.Outlined.NotificationsNone,
                             contentDescription = "Notifications",
-                            tint = NightTextSecondary,
+                            tint = c.textSecondary,
                             modifier = Modifier.size(20.dp),
                         )
                     }
@@ -182,13 +174,13 @@ fun TonightScreen(
                     text = "${state.greeting} 🌙",
                     fontSize = 26.sp,
                     fontWeight = FontWeight.Bold,
-                    color = NightTextPrimary,
+                    color = c.textPrimary,
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(
                     text = "SleepWise is ready for tonight.",
                     fontSize = 14.sp,
-                    color = NightTextSecondary,
+                    color = c.textSecondary,
                 )
 
                 Spacer(Modifier.height(24.dp))
@@ -264,6 +256,7 @@ private fun NoWatchSheet(
     onOpenBluetooth: () -> Unit,
     onStartAlarmOnly: () -> Unit,
 ) {
+    val c = LocalSleepColors.current
     val pulse = rememberInfiniteTransition("watchGlow")
     val glowAlpha by pulse.animateFloat(
         initialValue = 0.12f,
@@ -284,7 +277,7 @@ private fun NoWatchSheet(
                     colorStops = arrayOf(
                         0f   to Color(0xFF1C2040),
                         0.7f to Color(0xFF111428),
-                        1f   to NightBg,
+                        1f   to c.bg,
                     )
                 )
             )
@@ -297,7 +290,7 @@ private fun NoWatchSheet(
                 .padding(top = 12.dp, bottom = 4.dp)
                 .size(width = 36.dp, height = 4.dp)
                 .clip(RoundedCornerShape(2.dp))
-                .background(NightBorder),
+                .background(c.border),
         )
 
         Spacer(Modifier.height(24.dp))
@@ -311,25 +304,25 @@ private fun NoWatchSheet(
                 modifier = Modifier
                     .size(112.dp)
                     .clip(CircleShape)
-                    .background(NightPrimary.copy(alpha = glowAlpha)),
+                    .background(c.primary.copy(alpha = glowAlpha)),
             )
             Box(
                 modifier = Modifier
                     .size(86.dp)
                     .clip(CircleShape)
-                    .background(NightPrimary.copy(alpha = 0.18f)),
+                    .background(c.primary.copy(alpha = 0.18f)),
             )
             Box(
                 modifier = Modifier
                     .size(68.dp)
                     .clip(CircleShape)
-                    .background(NightSurface2),
+                    .background(c.surface2),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
                     Icons.Outlined.Watch,
                     contentDescription = null,
-                    tint   = NightTextAccent,
+                    tint   = c.textAccent,
                     modifier = Modifier.size(34.dp),
                 )
             }
@@ -337,7 +330,7 @@ private fun NoWatchSheet(
                 modifier = Modifier
                     .size(26.dp)
                     .clip(CircleShape)
-                    .background(NightPrimary)
+                    .background(c.primary)
                     .align(Alignment.BottomEnd),
                 contentAlignment = Alignment.Center,
             ) {
@@ -351,7 +344,7 @@ private fun NoWatchSheet(
             text       = "No Galaxy Watch connected 🌙",
             fontSize   = 22.sp,
             fontWeight = FontWeight.Bold,
-            color      = NightTextPrimary,
+            color      = c.textPrimary,
             textAlign  = TextAlign.Center,
             lineHeight = 30.sp,
         )
@@ -361,7 +354,7 @@ private fun NoWatchSheet(
         Text(
             text       = "To track your sleep stages and wake you during light sleep, SleepWise needs your Galaxy Watch.",
             fontSize   = 14.sp,
-            color      = NightTextSecondary,
+            color      = c.textSecondary,
             textAlign  = TextAlign.Center,
             lineHeight = 20.sp,
         )
@@ -373,8 +366,8 @@ private fun NoWatchSheet(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(16.dp))
-                .background(NightPrimary.copy(alpha = 0.10f))
-                .border(1.dp, NightPrimary.copy(alpha = 0.18f), RoundedCornerShape(16.dp))
+                .background(c.primary.copy(alpha = 0.10f))
+                .border(1.dp, c.primary.copy(alpha = 0.18f), RoundedCornerShape(16.dp))
                 .padding(16.dp),
             verticalAlignment = Alignment.Top,
         ) {
@@ -384,12 +377,12 @@ private fun NoWatchSheet(
                 Text(
                     "Without your watch, the alarm will ring at",
                     fontSize = 13.sp,
-                    color = NightTextSecondary,
+                    color = c.textSecondary,
                     lineHeight = 18.sp,
                 )
                 Row {
-                    Text(wakeTime, fontSize = 13.sp, color = NightPrimary, fontWeight = FontWeight.SemiBold)
-                    Text(" — the end of your wake window.", fontSize = 13.sp, color = NightTextSecondary)
+                    Text(wakeTime, fontSize = 13.sp, color = c.primary, fontWeight = FontWeight.SemiBold)
+                    Text(" — the end of your wake window.", fontSize = 13.sp, color = c.textSecondary)
                 }
             }
         }
@@ -402,7 +395,7 @@ private fun NoWatchSheet(
                 .fillMaxWidth()
                 .height(54.dp)
                 .clip(RoundedCornerShape(50))
-                .background(Brush.horizontalGradient(listOf(NightPrimary, NightPrimaryEnd)))
+                .background(Brush.horizontalGradient(listOf(c.primary, c.primaryEnd)))
                 .clickable { onOpenBluetooth() },
             contentAlignment = Alignment.Center,
         ) {
@@ -428,8 +421,8 @@ private fun NoWatchSheet(
                 .fillMaxWidth()
                 .height(54.dp)
                 .clip(RoundedCornerShape(50))
-                .border(1.dp, NightBorder, RoundedCornerShape(50))
-                .background(NightSurface)
+                .border(1.dp, c.border, RoundedCornerShape(50))
+                .background(c.surface)
                 .clickable { onStartAlarmOnly() },
             contentAlignment = Alignment.Center,
         ) {
@@ -437,7 +430,7 @@ private fun NoWatchSheet(
                 "Start Without Watch",
                 fontSize   = 16.sp,
                 fontWeight = FontWeight.Medium,
-                color      = NightTextPrimary,
+                color      = c.textPrimary,
             )
         }
 
@@ -447,7 +440,7 @@ private fun NoWatchSheet(
         Text(
             "Not now",
             fontSize = 14.sp,
-            color    = NightTextSecondary,
+            color    = c.textSecondary,
             modifier = Modifier
                 .clickable { onDismiss() }
                 .padding(vertical = 14.dp),
@@ -461,6 +454,7 @@ private fun NoWatchSheet(
 
 @Composable
 private fun WakeUpCard(state: TonightUiState) {
+    val c = LocalSleepColors.current
     val wakeTime = state.schedule.wakeTime
     val winStart = state.schedule.windowStart
 
@@ -468,7 +462,7 @@ private fun WakeUpCard(state: TonightUiState) {
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(24.dp))
-            .background(Brush.verticalGradient(colors = listOf(Color(0xFF1A1F3A), NightSurface)))
+            .background(Brush.verticalGradient(colors = listOf(Color(0xFF1A1F3A), c.surface)))
     ) {
         Box(
             modifier = Modifier
@@ -476,7 +470,7 @@ private fun WakeUpCard(state: TonightUiState) {
                 .align(Alignment.TopEnd)
                 .background(
                     Brush.radialGradient(
-                        colors = listOf(NightPrimary.copy(alpha = 0.12f), Color.Transparent)
+                        colors = listOf(c.primary.copy(alpha = 0.12f), Color.Transparent)
                     )
                 )
         )
@@ -485,7 +479,7 @@ private fun WakeUpCard(state: TonightUiState) {
                 text          = "Tomorrow's wake up",
                 fontSize      = 12.sp,
                 fontWeight    = FontWeight.Medium,
-                color         = NightTextSecondary,
+                color         = c.textSecondary,
                 letterSpacing = 0.5.sp,
             )
             Spacer(Modifier.height(8.dp))
@@ -493,21 +487,21 @@ private fun WakeUpCard(state: TonightUiState) {
                 text       = wakeTime.format(TimeFmt),
                 fontSize   = 54.sp,
                 fontWeight = FontWeight.Bold,
-                color      = NightTextPrimary,
+                color      = c.textPrimary,
                 lineHeight = 58.sp,
             )
             Spacer(Modifier.height(6.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Smart window  ", fontSize = 13.sp, color = NightTextSecondary)
+                Text("Smart window  ", fontSize = 13.sp, color = c.textSecondary)
                 Text(
                     text       = "${winStart.format(shortTime())} – ${wakeTime.format(shortTime())}",
                     fontSize   = 13.sp,
                     fontWeight = FontWeight.SemiBold,
-                    color      = NightTextAccent,
+                    color      = c.textAccent,
                 )
             }
             Spacer(Modifier.height(16.dp))
-            HorizontalDivider(color = NightBorder, thickness = 0.5.dp)
+            HorizontalDivider(color = c.border, thickness = 0.5.dp)
             Spacer(Modifier.height(16.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("✨", fontSize = 14.sp)
@@ -515,7 +509,7 @@ private fun WakeUpCard(state: TonightUiState) {
                 Text(
                     text       = if (state.isAlarmOnly) "Regular alarm — smart wake disabled" else "We will wake you during light sleep",
                     fontSize   = 13.sp,
-                    color      = if (state.isAlarmOnly) NightTextSecondary else NightTextAccent,
+                    color      = if (state.isAlarmOnly) c.textSecondary else c.textAccent,
                     fontWeight = FontWeight.Medium,
                 )
             }
@@ -527,6 +521,7 @@ private fun WakeUpCard(state: TonightUiState) {
 
 @Composable
 private fun ReadinessCard(watchStatus: WatchStatus) {
+    val c = LocalSleepColors.current
     val (watchValue, watchOk) = when (watchStatus) {
         WatchStatus.Checking     -> "Checking…"      to false
         WatchStatus.Connected    -> "Connected"            to true
@@ -539,13 +534,13 @@ private fun ReadinessCard(watchStatus: WatchStatus) {
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(20.dp))
-            .background(NightSurface),
+            .background(c.surface),
     ) {
         Column(modifier = Modifier.padding(20.dp)) {
-            Text("READINESS", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = NightTextSecondary, letterSpacing = 1.sp)
+            Text("READINESS", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = c.textSecondary, letterSpacing = 1.sp)
             Spacer(Modifier.height(16.dp))
             ReadinessRow(icon = Icons.Outlined.Watch, title = "Galaxy Watch", value = watchValue, ok = watchOk)
-            HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp), color = NightBorder, thickness = 0.5.dp)
+            HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp), color = c.border, thickness = 0.5.dp)
             ReadinessRow(
                 icon  = Icons.Outlined.MonitorHeart,
                 title = "Sleep tracking",
@@ -558,24 +553,25 @@ private fun ReadinessCard(watchStatus: WatchStatus) {
 
 @Composable
 private fun ReadinessRow(icon: ImageVector, title: String, value: String, ok: Boolean) {
+    val c = LocalSleepColors.current
     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Box(
-            modifier = Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).background(NightSurface2),
+            modifier = Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).background(c.surface2),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(icon, null, tint = NightTextAccent, modifier = Modifier.size(18.dp))
+            Icon(icon, null, tint = c.textAccent, modifier = Modifier.size(18.dp))
         }
         Spacer(Modifier.width(14.dp))
         Column(modifier = Modifier.weight(1f)) {
-            Text(title, fontSize = 14.sp, color = NightTextPrimary, fontWeight = FontWeight.Medium)
-            Text(value, fontSize = 12.sp, color = if (ok) NightSuccess else NightTextSecondary)
+            Text(title, fontSize = 14.sp, color = c.textPrimary, fontWeight = FontWeight.Medium)
+            Text(value, fontSize = 12.sp, color = if (ok) c.success else c.textSecondary)
         }
         if (ok) {
             Box(
-                modifier = Modifier.size(24.dp).clip(CircleShape).background(NightSuccess.copy(alpha = 0.15f)),
+                modifier = Modifier.size(24.dp).clip(CircleShape).background(c.success.copy(alpha = 0.15f)),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(Icons.Outlined.Check, null, tint = NightSuccess, modifier = Modifier.size(14.dp))
+                Icon(Icons.Outlined.Check, null, tint = c.success, modifier = Modifier.size(14.dp))
             }
         }
     }
@@ -591,10 +587,11 @@ private fun StartButton(
     onStart: () -> Unit,
     onStop: () -> Unit,
 ) {
+    val c = LocalSleepColors.current
     val bgBrush = if (isTracking) {
         Brush.horizontalGradient(listOf(Color(0xFF2A3060), Color(0xFF1E2A44)))
     } else {
-        Brush.horizontalGradient(listOf(NightPrimary, NightPrimaryEnd))
+        Brush.horizontalGradient(listOf(c.primary, c.primaryEnd))
     }
 
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -608,7 +605,7 @@ private fun StartButton(
             contentAlignment = Alignment.Center,
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Icon(Icons.Outlined.Nightlight, null, tint = NightTextPrimary, modifier = Modifier.size(20.dp))
+                Icon(Icons.Outlined.Nightlight, null, tint = c.textPrimary, modifier = Modifier.size(20.dp))
                 Text(
                     text = when {
                         isTracking && isAlarmOnly -> "Alarm Only — Tap to Stop"
@@ -617,19 +614,19 @@ private fun StartButton(
                     },
                     fontSize   = 16.sp,
                     fontWeight = FontWeight.SemiBold,
-                    color      = NightTextPrimary,
+                    color      = c.textPrimary,
                 )
             }
         }
 
         if (!isTracking && watchMissing) {
             Spacer(Modifier.height(8.dp))
-            Text("⚠ No watch detected — alarm only", fontSize = 12.sp, color = NightTextSecondary)
+            Text("⚠ No watch detected — alarm only", fontSize = 12.sp, color = c.textSecondary)
         }
 
         if (isTracking && isAlarmOnly) {
             Spacer(Modifier.height(8.dp))
-            Text("Regular alarm set — no sleep monitoring", fontSize = 12.sp, color = NightTextSecondary)
+            Text("Regular alarm set — no sleep monitoring", fontSize = 12.sp, color = c.textSecondary)
         }
     }
 }

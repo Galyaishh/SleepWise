@@ -30,14 +30,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.sleepwisepoc.ui.theme.NightBg
-import com.example.sleepwisepoc.ui.theme.NightPrimary
-import com.example.sleepwisepoc.ui.theme.NightPrimaryEnd
-import com.example.sleepwisepoc.ui.theme.NightTextPrimary
-import com.example.sleepwisepoc.ui.theme.NightTextSecondary
+import com.example.sleepwisepoc.ui.theme.LocalSleepColors
 
 @Composable
 fun SplashScreen() {
+    val c = LocalSleepColors.current
     var visible by remember { mutableStateOf(false) }
     val alpha by animateFloatAsState(
         targetValue = if (visible) 1f else 0f,
@@ -65,8 +62,8 @@ fun SplashScreen() {
                 Brush.verticalGradient(
                     colorStops = arrayOf(
                         0.0f to Color(0xFF0D0F22),
-                        0.6f to NightBg,
-                        1.0f to NightBg,
+                        0.6f to c.bg,
+                        1.0f to c.bg,
                     )
                 )
             ),
@@ -85,7 +82,7 @@ fun SplashScreen() {
                     .background(
                         Brush.radialGradient(
                             colors = listOf(
-                                NightPrimary.copy(alpha = 0.35f),
+                                c.primary.copy(alpha = 0.35f),
                                 Color.Transparent,
                             )
                         )
@@ -101,7 +98,7 @@ fun SplashScreen() {
                 text = "SleepWise",
                 fontSize = 36.sp,
                 fontWeight = FontWeight.Bold,
-                color = NightTextPrimary,
+                color = c.textPrimary,
                 letterSpacing = (-0.5).sp,
             )
 
@@ -110,7 +107,7 @@ fun SplashScreen() {
             Text(
                 text = "Better sleep. Smarter waking.",
                 fontSize = 15.sp,
-                color = NightTextSecondary,
+                color = c.textSecondary,
             )
         }
     }

@@ -9,11 +9,15 @@ import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
+
+val LocalSleepColors = staticCompositionLocalOf { nightAppColors }
 
 private val SleepWiseLightColorScheme = lightColorScheme(
     primary              = SleepPrimary,
@@ -54,7 +58,7 @@ private val SleepWiseDarkColorScheme = darkColorScheme(
 
 @Composable
 fun SleepWisePOCTheme(
-    darkTheme: Boolean = true,
+    darkTheme: Boolean = isSystemInDarkTheme(),
     // Dynamic color disabled — we use our own sleep-friendly palette
     dynamicColor: Boolean = false,
     content: @Composable () -> Unit
@@ -77,9 +81,11 @@ fun SleepWisePOCTheme(
         }
     }
 
-    MaterialTheme(
-        colorScheme = colorScheme,
-        typography  = Typography,
-        content     = content
-    )
+    CompositionLocalProvider(LocalSleepColors provides if (darkTheme) nightAppColors else dayAppColors) {
+        MaterialTheme(
+            colorScheme = colorScheme,
+            typography  = Typography,
+            content     = content
+        )
+    }
 }

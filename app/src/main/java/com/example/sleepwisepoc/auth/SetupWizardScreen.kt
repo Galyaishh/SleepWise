@@ -1,8 +1,13 @@
 package com.example.sleepwisepoc.auth
 
+import android.app.Activity
 import android.content.Intent
+import android.media.RingtoneManager
+import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.LaunchedEffect
 import com.example.sleepwisepoc.SamsungHealthManager
 import kotlinx.coroutines.Dispatchers
@@ -26,6 +31,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Bluetooth
+import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.Watch
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -46,33 +52,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.sleepwisepoc.schedule.ALARM_SOUNDS
 import com.example.sleepwisepoc.schedule.DaySchedule
 import com.example.sleepwisepoc.schedule.SleepScheduleStore
 import com.example.sleepwisepoc.schedule.SleepTimePickerDialog
-import com.example.sleepwisepoc.ui.theme.NightBg
-import com.example.sleepwisepoc.ui.theme.NightBorder
-import com.example.sleepwisepoc.ui.theme.NightPrimary
-import com.example.sleepwisepoc.ui.theme.NightPrimaryEnd
-import com.example.sleepwisepoc.ui.theme.NightSurface
-import com.example.sleepwisepoc.ui.theme.NightSuccess
-import com.example.sleepwisepoc.ui.theme.NightSurface2
-import com.example.sleepwisepoc.ui.theme.NightTextAccent
-import com.example.sleepwisepoc.ui.theme.NightTextPrimary
-import com.example.sleepwisepoc.ui.theme.NightTextSecondary
+import com.example.sleepwisepoc.ui.theme.LocalSleepColors
 import kotlinx.coroutines.launch
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 
 private val TimeFmt = DateTimeFormatter.ofPattern("hh:mm a")
-
-private val SOUND_EMOJIS = mapOf(
-    "Sunrise Chimes" to "☀️",
-    "Forest Morning"  to "🌿",
-    "Ocean Waves"     to "🌊",
-    "Gentle Bell"     to "🔔",
-    "Vibration Only"  to "🔕",
-)
 
 private fun isEmulator() =
     Build.FINGERPRINT.contains("generic", ignoreCase = true) ||
@@ -83,6 +71,7 @@ private fun isEmulator() =
 
 @Composable
 fun SetupWizardScreen(onComplete: () -> Unit) {
+    val c = LocalSleepColors.current
     val context = LocalContext.current
     val scope   = rememberCoroutineScope()
     val store   = remember { SleepScheduleStore(context) }
@@ -90,16 +79,33 @@ fun SetupWizardScreen(onComplete: () -> Unit) {
     var step by remember { mutableIntStateOf(0) }
 
     // Hoisted state — shared across steps and saved on finish
-    var weekdayTime   by remember { mutableStateOf(LocalTime.of(7, 0)) }
-    var weekendTime   by remember { mutableStateOf(LocalTime.of(9, 0)) }
-    var selectedSound by remember { mutableStateOf(ALARM_SOUNDS.first()) }
+    var weekdayTime    by remember { mutableStateOf(LocalTime.of(7, 0)) }
+    var weekendTime    by remember { mutableStateOf(LocalTime.of(9, 0)) }
+    var selectedSound  by remember { mutableStateOf("Default Alarm") }
+    var selectedSoundUri by remember { mutableStateOf<String?>(null) }
+
+    val soundPickerLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val uri = result.data
+                ?.getParcelableExtra<Uri>(RingtoneManager.EXTRA_RINGTONE_PICKED_URI)
+            val title = when {
+                uri == null -> "Silent"
+                else -> RingtoneManager.getRingtone(context, uri)
+                    ?.getTitle(context) ?: "Custom Sound"
+            }
+            selectedSound    = title
+            selectedSoundUri = uri?.toString()
+        }
+    }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(
                 Brush.verticalGradient(
-                    colorStops = arrayOf(0f to Color(0xFF0D0F22), 0.5f to NightBg, 1f to NightBg)
+                    colorStops = arrayOf(0f to Color(0xFF0D0F22), 0.5f to c.bg, 1f to c.bg)
                 )
             )
     ) {
@@ -126,7 +132,18 @@ fun SetupWizardScreen(onComplete: () -> Unit) {
                 )
                 2 -> WakeExperienceStep(
                     selectedSound = selectedSound,
-                    onSoundChange = { selectedSound = it },
+                    onPickSound   = {
+                        val intent = Intent(RingtoneManager.ACTION_RINGTONE_PICKER).apply {
+                            putExtra(RingtoneManager.EXTRA_RINGTONE_TYPE, RingtoneManager.TYPE_ALARM)
+                            putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_SILENT, true)
+                            putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_DEFAULT, true)
+                            putExtra(RingtoneManager.EXTRA_RINGTONE_TITLE, "Select Alarm Sound")
+                            selectedSoundUri?.let {
+                                putExtra(RingtoneManager.EXTRA_RINGTONE_EXISTING_URI, Uri.parse(it))
+                            }
+                        }
+                        soundPickerLauncher.launch(intent)
+                    },
                 )
             }
 
@@ -138,7 +155,7 @@ fun SetupWizardScreen(onComplete: () -> Unit) {
                     .fillMaxWidth()
                     .height(58.dp)
                     .clip(RoundedCornerShape(50))
-                    .background(Brush.horizontalGradient(listOf(NightPrimary, NightPrimaryEnd)))
+                    .background(Brush.horizontalGradient(listOf(c.primary, c.primaryEnd)))
                     .clickable {
                         if (step < 2) {
                             step++
@@ -149,6 +166,7 @@ fun SetupWizardScreen(onComplete: () -> Unit) {
                                         wakeTime      = weekdayTime,
                                         windowMinutes = 30,
                                         alarmSound    = selectedSound,
+                                        alarmSoundUri = selectedSoundUri,
                                     )
                                 )
                                 store.saveWeekend(
@@ -156,6 +174,7 @@ fun SetupWizardScreen(onComplete: () -> Unit) {
                                         wakeTime      = weekendTime,
                                         windowMinutes = 45,
                                         alarmSound    = selectedSound,
+                                        alarmSoundUri = selectedSoundUri,
                                     )
                                 )
                                 onComplete()
@@ -168,7 +187,7 @@ fun SetupWizardScreen(onComplete: () -> Unit) {
                     text       = if (step < 2) "Continue" else "Start using SleepWise",
                     fontSize   = 16.sp,
                     fontWeight = FontWeight.SemiBold,
-                    color      = NightTextPrimary,
+                    color      = c.textPrimary,
                 )
             }
 
@@ -178,7 +197,7 @@ fun SetupWizardScreen(onComplete: () -> Unit) {
                 Text(
                     text     = "Skip for now",
                     fontSize = 14.sp,
-                    color    = NightTextSecondary,
+                    color    = c.textSecondary,
                     modifier = Modifier.clickable { step++ }.padding(8.dp),
                 )
             }
@@ -192,13 +211,14 @@ fun SetupWizardScreen(onComplete: () -> Unit) {
 
 @Composable
 private fun StepIndicator(current: Int, total: Int) {
+    val c = LocalSleepColors.current
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         repeat(total) { i ->
             Box(
                 modifier = Modifier
                     .size(if (i == current) 32.dp else 8.dp, 8.dp)
                     .clip(RoundedCornerShape(4.dp))
-                    .background(if (i == current) NightPrimary else NightPrimary.copy(alpha = 0.25f))
+                    .background(if (i == current) c.primary else c.primary.copy(alpha = 0.25f))
             )
         }
     }
@@ -210,6 +230,7 @@ private enum class WatchCheckState { Checking, Connected, Disconnected }
 
 @Composable
 private fun ConnectWatchStep() {
+    val c = LocalSleepColors.current
     val context = LocalContext.current
     var watchState by remember { mutableStateOf(WatchCheckState.Checking) }
 
@@ -244,9 +265,9 @@ private fun ConnectWatchStep() {
         WatchCheckState.Disconnected -> "Not connected"
     }
     val statusColor = when (watchState) {
-        WatchCheckState.Connected    -> NightSuccess
-        WatchCheckState.Checking     -> NightTextSecondary
-        WatchCheckState.Disconnected -> NightTextSecondary
+        WatchCheckState.Connected    -> c.success
+        WatchCheckState.Checking     -> c.textSecondary
+        WatchCheckState.Disconnected -> c.textSecondary
     }
 
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -256,7 +277,7 @@ private fun ConnectWatchStep() {
             "Connect your\nsmartwatch",
             fontSize   = 28.sp,
             fontWeight = FontWeight.Bold,
-            color      = NightTextPrimary,
+            color      = c.textPrimary,
             textAlign  = TextAlign.Center,
             lineHeight = 34.sp,
         )
@@ -264,7 +285,7 @@ private fun ConnectWatchStep() {
         Text(
             "SleepWise uses your Galaxy Watch to track heart rate and sleep stages throughout the night.",
             fontSize   = 15.sp,
-            color      = NightTextSecondary,
+            color      = c.textSecondary,
             textAlign  = TextAlign.Center,
             lineHeight = 22.sp,
         )
@@ -274,7 +295,7 @@ private fun ConnectWatchStep() {
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(20.dp))
-                .background(NightSurface)
+                .background(c.surface)
                 .padding(20.dp)
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -283,14 +304,14 @@ private fun ConnectWatchStep() {
                         modifier = Modifier
                             .size(48.dp)
                             .clip(RoundedCornerShape(14.dp))
-                            .background(NightSurface2),
+                            .background(c.surface2),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Icon(Icons.Outlined.Watch, null, tint = NightTextAccent, modifier = Modifier.size(24.dp))
+                        Icon(Icons.Outlined.Watch, null, tint = c.textAccent, modifier = Modifier.size(24.dp))
                     }
                     Spacer(Modifier.width(16.dp))
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("Galaxy Watch", fontSize = 15.sp, fontWeight = FontWeight.Medium, color = NightTextPrimary)
+                        Text("Galaxy Watch", fontSize = 15.sp, fontWeight = FontWeight.Medium, color = c.textPrimary)
                         Text(statusText, fontSize = 13.sp, color = statusColor)
                     }
                 }
@@ -301,7 +322,7 @@ private fun ConnectWatchStep() {
                             .fillMaxWidth()
                             .height(46.dp)
                             .clip(RoundedCornerShape(50))
-                            .background(Brush.horizontalGradient(listOf(NightPrimary, NightPrimaryEnd)))
+                            .background(Brush.horizontalGradient(listOf(c.primary, c.primaryEnd)))
                             .clickable { context.startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS)) },
                         contentAlignment = Alignment.Center,
                     ) {
@@ -313,7 +334,7 @@ private fun ConnectWatchStep() {
                     Text(
                         "Already connected? Tap Continue below.",
                         fontSize  = 12.sp,
-                        color     = NightTextSecondary,
+                        color     = c.textSecondary,
                         textAlign = TextAlign.Center,
                         modifier  = Modifier.fillMaxWidth(),
                     )
@@ -321,7 +342,7 @@ private fun ConnectWatchStep() {
                     Text(
                         "Your watch is ready. Tap Continue.",
                         fontSize  = 12.sp,
-                        color     = NightSuccess,
+                        color     = c.success,
                         textAlign = TextAlign.Center,
                         modifier  = Modifier.fillMaxWidth(),
                     )
@@ -340,6 +361,7 @@ private fun ScheduleStep(
     onWeekdayChange: (LocalTime) -> Unit,
     onWeekendChange: (LocalTime) -> Unit,
 ) {
+    val c = LocalSleepColors.current
     var showWeekdayPicker by remember { mutableStateOf(false) }
     var showWeekendPicker by remember { mutableStateOf(false) }
 
@@ -365,7 +387,7 @@ private fun ScheduleStep(
             "Set your sleep\nschedule",
             fontSize   = 28.sp,
             fontWeight = FontWeight.Bold,
-            color      = NightTextPrimary,
+            color      = c.textPrimary,
             textAlign  = TextAlign.Center,
             lineHeight = 34.sp,
         )
@@ -373,7 +395,7 @@ private fun ScheduleStep(
         Text(
             "We'll automatically prepare your smart alarm each night based on your schedule.",
             fontSize   = 15.sp,
-            color      = NightTextSecondary,
+            color      = c.textSecondary,
             textAlign  = TextAlign.Center,
             lineHeight = 22.sp,
         )
@@ -383,10 +405,10 @@ private fun ScheduleStep(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(20.dp))
-                .background(NightSurface),
+                .background(c.surface),
         ) {
             TimeRow("Weekdays", weekdayTime.format(TimeFmt)) { showWeekdayPicker = true }
-            Box(modifier = Modifier.fillMaxWidth().height(0.5.dp).background(NightBorder))
+            Box(modifier = Modifier.fillMaxWidth().height(0.5.dp).background(c.border))
             TimeRow("Weekends", weekendTime.format(TimeFmt)) { showWeekendPicker = true }
         }
     }
@@ -394,6 +416,7 @@ private fun ScheduleStep(
 
 @Composable
 private fun TimeRow(label: String, value: String, onClick: () -> Unit) {
+    val c = LocalSleepColors.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -402,8 +425,8 @@ private fun TimeRow(label: String, value: String, onClick: () -> Unit) {
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment     = Alignment.CenterVertically,
     ) {
-        Text(label, fontSize = 15.sp, color = NightTextPrimary)
-        Text(value, fontSize = 15.sp, color = NightTextAccent, fontWeight = FontWeight.SemiBold)
+        Text(label, fontSize = 15.sp, color = c.textPrimary)
+        Text(value, fontSize = 15.sp, color = c.textAccent, fontWeight = FontWeight.SemiBold)
     }
 }
 
@@ -412,56 +435,59 @@ private fun TimeRow(label: String, value: String, onClick: () -> Unit) {
 @Composable
 private fun WakeExperienceStep(
     selectedSound: String,
-    onSoundChange: (String) -> Unit,
+    onPickSound: () -> Unit,
 ) {
+    val c = LocalSleepColors.current
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Text("🎵", fontSize = 52.sp)
         Spacer(Modifier.height(24.dp))
         Text(
-            "Choose your\nwake experience",
+            "Choose your\nwake sound",
             fontSize   = 28.sp,
             fontWeight = FontWeight.Bold,
-            color      = NightTextPrimary,
+            color      = c.textPrimary,
             textAlign  = TextAlign.Center,
             lineHeight = 34.sp,
         )
         Spacer(Modifier.height(12.dp))
         Text(
-            "How do you want to wake up each morning?",
-            fontSize  = 15.sp,
-            color     = NightTextSecondary,
-            textAlign = TextAlign.Center,
+            "Pick from your device's alarm sounds. You can change this any time in Settings.",
+            fontSize   = 15.sp,
+            color      = c.textSecondary,
+            textAlign  = TextAlign.Center,
+            lineHeight = 22.sp,
         )
         Spacer(Modifier.height(28.dp))
 
-        Column(
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(20.dp))
-                .background(NightSurface),
+                .background(c.surface)
+                .clickable(onClick = onPickSound)
+                .padding(horizontal = 20.dp, vertical = 20.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment     = Alignment.CenterVertically,
         ) {
-            ALARM_SOUNDS.forEachIndexed { i, sound ->
-                val emoji = SOUND_EMOJIS[sound] ?: "🎵"
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { onSoundChange(sound) }
-                        .padding(horizontal = 20.dp, vertical = 16.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment     = Alignment.CenterVertically,
-                ) {
-                    Text("$emoji  $sound", fontSize = 15.sp, color = NightTextPrimary)
-                    Box(
-                        modifier = Modifier
-                            .size(22.dp)
-                            .clip(CircleShape)
-                            .background(if (sound == selectedSound) NightPrimary else NightSurface2),
-                    )
-                }
-                if (i < ALARM_SOUNDS.lastIndex) {
-                    Box(modifier = Modifier.fillMaxWidth().height(0.5.dp).background(NightBorder))
-                }
+            Column {
+                Text("Alarm sound", fontSize = 13.sp, color = c.textSecondary)
+                Spacer(Modifier.height(2.dp))
+                Text(selectedSound, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = c.textPrimary)
             }
+            Icon(
+                Icons.Outlined.ChevronRight, null,
+                tint     = c.textSecondary,
+                modifier = Modifier.size(20.dp),
+            )
         }
+
+        Spacer(Modifier.height(16.dp))
+
+        Text(
+            "Tap to open the system sound picker",
+            fontSize  = 12.sp,
+            color     = c.textSecondary,
+            textAlign = TextAlign.Center,
+        )
     }
 }

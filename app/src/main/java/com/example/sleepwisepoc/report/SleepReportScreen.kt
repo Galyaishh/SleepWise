@@ -56,15 +56,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.sleepwisepoc.SessionRecord
 import com.example.sleepwisepoc.StageTick
 import com.example.sleepwisepoc.WeeklyReport
-import com.example.sleepwisepoc.ui.theme.NightBg
-import com.example.sleepwisepoc.ui.theme.NightBorder
-import com.example.sleepwisepoc.ui.theme.NightPrimary
-import com.example.sleepwisepoc.ui.theme.NightSuccess
-import com.example.sleepwisepoc.ui.theme.NightSurface
-import com.example.sleepwisepoc.ui.theme.NightSurface2
-import com.example.sleepwisepoc.ui.theme.NightTextAccent
-import com.example.sleepwisepoc.ui.theme.NightTextPrimary
-import com.example.sleepwisepoc.ui.theme.NightTextSecondary
+import com.example.sleepwisepoc.ui.theme.LocalSleepColors
 import kotlinx.coroutines.launch
 import java.time.DayOfWeek
 import java.time.Duration
@@ -115,6 +107,7 @@ private data class WeekCard(
     val stageFracs: Map<String, Float>,
     val isCurrent: Boolean,
     val hasData: Boolean,
+    val score: Int = 0,
 )
 
 // ─── Domain helpers ───────────────────────────────────────────────────────────
@@ -156,6 +149,74 @@ private fun formatDuration(mins: Long): String {
     return if (h > 0) "${h}h ${m}m" else "${m}m"
 }
 
+
+/**
+ * 0–100 sleep quality score.
+ *
+ * Component weights:
+ *   Total sleep duration  – up to 30 pts  (7–9h ideal)
+ *   Deep sleep %          – up to 25 pts  (≥20% ideal)
+ *   REM sleep %           – up to 20 pts  (≥20% ideal)
+ *   Wake bouts            – up to 15 pts  (0 bouts ideal)
+ *   Smart-wake outcome    – up to 10 pts  (favorable)
+ */
+private fun computeSleepScore(
+    d: StageDurations,
+    wakeBouts: Int,
+    firedReason: String?,
+): Int {
+    val sleepMins = d.sleepingMins.coerceAtLeast(1L)
+    val total     = d.totalMins.toFloat().coerceAtLeast(1f)
+    val deepPct   = d.deepMins / total
+    val remPct    = d.remMins  / total
+
+    // Duration (30 pts)
+    val durPts = when {
+        sleepMins >= 420 && sleepMins <= 540 -> 30  // 7–9h
+        sleepMins >= 360 && sleepMins < 420  -> 22  // 6–7h
+        sleepMins >= 540 && sleepMins <= 600 -> 22  // 9–10h (slightly long)
+        sleepMins >= 300 && sleepMins < 360  -> 12  // 5–6h
+        sleepMins > 600                      -> 12  // >10h
+        else                                 -> 4   // <5h
+    }
+
+    // Deep sleep (25 pts)
+    val deepPts = when {
+        deepPct >= 0.20f -> 25
+        deepPct >= 0.15f -> 18
+        deepPct >= 0.10f -> 10
+        else             -> 3
+    }
+
+    // REM sleep (20 pts)
+    val remPts = when {
+        remPct >= 0.20f -> 20
+        remPct >= 0.15f -> 14
+        remPct >= 0.10f -> 7
+        else            -> 2
+    }
+
+    // Wake bouts (15 pts)
+    val wakePts = when {
+        wakeBouts == 0 -> 15
+        wakeBouts <= 1 -> 11
+        wakeBouts <= 2 -> 7
+        wakeBouts <= 4 -> 3
+        else           -> 0
+    }
+
+    // Smart-wake outcome (10 pts)
+    val alarmPts = if (firedReason == "favorable") 10 else 0
+
+    return (durPts + deepPts + remPts + wakePts + alarmPts).coerceIn(0, 100)
+}
+
+private fun scoreColor(score: Int): Color = when {
+    score >= 85 -> Color(0xFF4CAF82)   // green
+    score >= 70 -> Color(0xFF68BDE0)   // teal/blue
+    score >= 50 -> Color(0xFFE8B06A)   // amber
+    else        -> Color(0xFFE06868)   // red
+}
 
 private fun countWakeBouts(ticks: List<StageTick>): Int {
     var count = 0; var wasWake = false
@@ -202,7 +263,7 @@ private fun generateInsights(
             "Try an earlier, consistent bedtime tonight.")
     }
     when {
-        wakeBouts == 0 -> list += Insight("🌙", NightSuccess,
+        wakeBouts == 0 -> list += Insight("🌙", Color(0xFF4ADE80),
             "Your heart rate stayed calm and stable.",
             "A sign of good recovery.")
         wakeBouts >= 4 -> list += Insight("🌙", StageColorAwake,
@@ -219,8 +280,9 @@ fun SleepReportScreen(
     modifier: Modifier = Modifier,
     viewModel: SleepReportViewModel = viewModel(),
 ) {
+    val c = LocalSleepColors.current
     val state by viewModel.state.collectAsState()
-    Box(modifier = modifier.fillMaxSize().background(NightBg)) {
+    Box(modifier = modifier.fillMaxSize().background(c.bg)) {
         when (val s = state) {
             ReportUiState.Loading        -> LoadingView()
             is ReportUiState.Empty       -> EmptyView()
@@ -239,6 +301,7 @@ fun SleepReportScreen(
 @Composable
 private fun NightPager(report: WeeklyReport, isDemoData: Boolean, onRefresh: () -> Unit) {
     val zone = ZoneId.systemDefault()
+    val c = LocalSleepColors.current
     val sessions = report.sessions
     if (sessions.isEmpty()) { EmptyView(); return }
 
@@ -275,7 +338,7 @@ private fun NightPager(report: WeeklyReport, isDemoData: Boolean, onRefresh: () 
             ) {
                 Icon(
                     Icons.Rounded.ChevronLeft, null,
-                    tint = if (currentPage < days.lastIndex) NightTextPrimary else NightTextSecondary.copy(0.3f),
+                    tint = if (currentPage < days.lastIndex) c.textPrimary else c.textSecondary.copy(0.3f),
                 )
             }
 
@@ -287,7 +350,7 @@ private fun NightPager(report: WeeklyReport, isDemoData: Boolean, onRefresh: () 
                 textAlign  = TextAlign.Center,
                 fontSize   = 17.sp,
                 fontWeight = FontWeight.SemiBold,
-                color      = NightTextPrimary,
+                color      = c.textPrimary,
             )
 
             // ▷ newer
@@ -297,12 +360,12 @@ private fun NightPager(report: WeeklyReport, isDemoData: Boolean, onRefresh: () 
             ) {
                 Icon(
                     Icons.Rounded.ChevronRight, null,
-                    tint = if (currentPage > 0) NightTextPrimary else NightTextSecondary.copy(0.3f),
+                    tint = if (currentPage > 0) c.textPrimary else c.textSecondary.copy(0.3f),
                 )
             }
 
             IconButton(onClick = onRefresh) {
-                Icon(Icons.Rounded.Refresh, null, tint = NightTextSecondary)
+                Icon(Icons.Rounded.Refresh, null, tint = c.textSecondary)
             }
         }
 
@@ -312,14 +375,17 @@ private fun NightPager(report: WeeklyReport, isDemoData: Boolean, onRefresh: () 
                     .padding(horizontal = 16.dp, vertical = 4.dp)
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(10.dp))
-                    .background(NightPrimary.copy(alpha = 0.10f))
+                    .background(c.primary.copy(alpha = 0.10f))
                     .padding(horizontal = 12.dp, vertical = 6.dp),
                 verticalAlignment     = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Text("✦", fontSize = 10.sp, color = NightPrimary)
-                Text("Demo data — connect your watch for real nights",
-                    fontSize = 11.sp, color = NightTextSecondary)
+                Text("✦", fontSize = 10.sp, color = c.primary)
+                Text(
+                    "Demo data — connect your watch for real nights",
+                    fontSize = 11.sp,
+                    color    = c.textSecondary,
+                )
             }
         }
 
@@ -363,6 +429,7 @@ private fun NightPage(
     val zone        = ZoneId.systemDefault()
     val durations   = remember(session.id) { computeStageDurations(session.stages) }
     val wakeBouts   = remember(session.id) { countWakeBouts(session.stages) }
+    val score       = remember(session.id) { computeSleepScore(durations, wakeBouts, session.fired_reason) }
     val insights    = remember(session.id) { generateInsights(durations, session.fired_reason, wakeBouts) }
 
     val bedInstant  = runCatching { Instant.parse(session.started_at) }.getOrNull()
@@ -394,6 +461,7 @@ private fun NightPage(
             wakeText      = wakeText,
             winStartStr   = winStartStr,
             winEndStr     = winEndStr,
+            score         = score,
         )
 
         // ── Smart wake banner ──────────────────────────────────────────────────
@@ -441,8 +509,9 @@ private fun HeroSection(
     wakeText: String,
     winStartStr: String,
     winEndStr: String,
+    score: Int,
 ) {
-
+    val c = LocalSleepColors.current
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -453,7 +522,7 @@ private fun HeroSection(
             modifier = Modifier
                 .size(200.dp)
                 .align(Alignment.TopCenter)
-                .background(Brush.radialGradient(listOf(NightPrimary.copy(0.10f), Color.Transparent))),
+                .background(Brush.radialGradient(listOf(c.primary.copy(0.10f), Color.Transparent))),
         )
 
         Column(modifier = Modifier.fillMaxWidth().padding(bottom = 20.dp)) {
@@ -463,32 +532,43 @@ private fun HeroSection(
             ) {
                 // Left — time in bed
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("Time in bed", fontSize = 11.sp, color = NightTextSecondary)
+                    Text("Time in bed", fontSize = 11.sp, color = c.textSecondary)
                     Spacer(Modifier.height(4.dp))
                     Text(
                         formatDuration(timeInBedMins),
                         fontSize   = 22.sp,
                         fontWeight = FontWeight.Bold,
-                        color      = NightTextPrimary,
+                        color      = c.textPrimary,
                     )
                     Spacer(Modifier.height(4.dp))
                     Text(
                         "$bedText – $wakeText",
                         fontSize   = 11.sp,
-                        color      = NightTextSecondary,
+                        color      = c.textSecondary,
                         lineHeight = 15.sp,
                     )
                 }
 
-                // Center — score ring (score algorithm TBD)
+                // Center — score ring
+                val ringColor = scoreColor(score)
                 Box(modifier = Modifier.size(120.dp), contentAlignment = Alignment.Center) {
                     Canvas(modifier = Modifier.fillMaxSize()) {
                         val sw    = 9.dp.toPx()
                         val inset = sw / 2f
                         val rect  = Size(size.width - sw, size.height - sw)
+                        // Background track
                         drawArc(
-                            color      = NightSurface2,
+                            color      = c.surface2,
                             startAngle = -90f, sweepAngle = 360f,
+                            useCenter  = false,
+                            topLeft    = Offset(inset, inset), size = rect,
+                            style      = Stroke(sw, cap = StrokeCap.Round),
+                        )
+                        // Filled arc proportional to score
+                        drawArc(
+                            color      = ringColor,
+                            startAngle = -90f,
+                            sweepAngle = 360f * (score / 100f),
                             useCenter  = false,
                             topLeft    = Offset(inset, inset), size = rect,
                             style      = Stroke(sw, cap = StrokeCap.Round),
@@ -496,15 +576,15 @@ private fun HeroSection(
                     }
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(
-                            "N/A",
+                            score.toString(),
                             fontSize   = 28.sp,
                             fontWeight = FontWeight.Bold,
-                            color      = NightTextSecondary,
+                            color      = ringColor,
                         )
                         Text(
                             "Score",
                             fontSize   = 12.sp,
-                            color      = NightTextSecondary,
+                            color      = c.textSecondary,
                         )
                     }
                 }
@@ -514,20 +594,20 @@ private fun HeroSection(
                     modifier            = Modifier.weight(1f),
                     horizontalAlignment = Alignment.End,
                 ) {
-                    Text("Total sleep", fontSize = 11.sp, color = NightTextSecondary)
+                    Text("Total sleep", fontSize = 11.sp, color = c.textSecondary)
                     Spacer(Modifier.height(4.dp))
                     Text(
                         formatDuration(sleepMins),
                         fontSize   = 22.sp,
                         fontWeight = FontWeight.Bold,
-                        color      = NightTextPrimary,
+                        color      = c.textPrimary,
                     )
                     Spacer(Modifier.height(4.dp))
-                    Text("Smart wake", fontSize = 11.sp, color = NightTextSecondary)
+                    Text("Smart wake", fontSize = 11.sp, color = c.textSecondary)
                     Text(
                         "$winStartStr – $winEndStr",
                         fontSize   = 11.sp,
-                        color      = NightTextAccent,
+                        color      = c.textAccent,
                         textAlign  = TextAlign.End,
                         lineHeight = 15.sp,
                     )
@@ -541,6 +621,7 @@ private fun HeroSection(
 
 @Composable
 private fun SmartWakeBanner() {
+    val c = LocalSleepColors.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -553,7 +634,7 @@ private fun SmartWakeBanner() {
             modifier         = Modifier
                 .size(36.dp)
                 .clip(CircleShape)
-                .background(NightPrimary.copy(0.15f)),
+                .background(c.primary.copy(0.15f)),
             contentAlignment = Alignment.Center,
         ) {
             Text("✨", fontSize = 16.sp)
@@ -563,12 +644,12 @@ private fun SmartWakeBanner() {
                 "You woke during optimal light sleep.",
                 fontSize   = 13.sp,
                 fontWeight = FontWeight.SemiBold,
-                color      = NightTextPrimary,
+                color      = c.textPrimary,
             )
             Text(
                 "Great way to start your day!",
                 fontSize = 12.sp,
-                color    = NightTextSecondary,
+                color    = c.textSecondary,
             )
         }
     }
@@ -578,6 +659,7 @@ private fun SmartWakeBanner() {
 
 @Composable
 private fun SleepStagesSection(session: SessionRecord) {
+    val c = LocalSleepColors.current
     if (session.stages.isEmpty()) return
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
@@ -589,9 +671,9 @@ private fun SleepStagesSection(session: SessionRecord) {
                 "Sleep stages",
                 fontSize   = 18.sp,
                 fontWeight = FontWeight.Bold,
-                color      = NightTextPrimary,
+                color      = c.textPrimary,
             )
-            Icon(Icons.Outlined.Info, null, tint = NightTextSecondary, modifier = Modifier.size(18.dp))
+            Icon(Icons.Outlined.Info, null, tint = c.textSecondary, modifier = Modifier.size(18.dp))
         }
         Spacer(Modifier.height(12.dp))
         SleepHypnogram(
@@ -605,6 +687,7 @@ private fun SleepStagesSection(session: SessionRecord) {
 
 @Composable
 private fun StageSummaryRow(durations: StageDurations, modifier: Modifier = Modifier) {
+    val c = LocalSleepColors.current
     data class Item(val label: String, val mins: Long, val color: Color)
     val total = durations.totalMins.toFloat().coerceAtLeast(1f)
     val items = listOf(
@@ -639,13 +722,13 @@ private fun StageSummaryRow(durations: StageDurations, modifier: Modifier = Modi
                     formatDuration(item.mins),
                     fontSize   = 15.sp,
                     fontWeight = FontWeight.Bold,
-                    color      = NightTextPrimary,
+                    color      = c.textPrimary,
                     textAlign  = TextAlign.Center,
                 )
                 Text(
                     "${((item.mins / total) * 100).roundToInt()}%",
                     fontSize  = 11.sp,
-                    color     = NightTextSecondary,
+                    color     = c.textSecondary,
                     textAlign = TextAlign.Center,
                 )
             }
@@ -657,19 +740,20 @@ private fun StageSummaryRow(durations: StageDurations, modifier: Modifier = Modi
 
 @Composable
 private fun InsightsSection(insights: List<Insight>, modifier: Modifier = Modifier) {
+    val c = LocalSleepColors.current
     Column(modifier = modifier.fillMaxWidth()) {
         Text(
             "Sleep insights",
             fontSize   = 18.sp,
             fontWeight = FontWeight.Bold,
-            color      = NightTextPrimary,
+            color      = c.textPrimary,
         )
         Spacer(Modifier.height(12.dp))
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(20.dp))
-                .background(NightSurface),
+                .background(c.surface),
         ) {
             insights.forEachIndexed { index, insight ->
                 Row(
@@ -694,26 +778,26 @@ private fun InsightsSection(insights: List<Insight>, modifier: Modifier = Modifi
                             insight.title,
                             fontSize   = 14.sp,
                             fontWeight = FontWeight.SemiBold,
-                            color      = NightTextPrimary,
+                            color      = c.textPrimary,
                             lineHeight = 19.sp,
                         )
                         Text(
                             insight.subtitle,
                             fontSize   = 12.sp,
-                            color      = NightTextSecondary,
+                            color      = c.textSecondary,
                             lineHeight = 17.sp,
                         )
                     }
                     Icon(
                         Icons.Outlined.ChevronRight, null,
-                        tint     = NightTextSecondary,
+                        tint     = c.textSecondary,
                         modifier = Modifier.size(18.dp),
                     )
                 }
                 if (index < insights.lastIndex) {
                     HorizontalDivider(
                         modifier  = Modifier.padding(start = 72.dp),
-                        color     = NightBorder,
+                        color     = c.border,
                         thickness = 0.5.dp,
                     )
                 }
@@ -731,6 +815,7 @@ private fun ThisWeekSection(
     sessionDate: LocalDate?,
     modifier: Modifier = Modifier,
 ) {
+    val c = LocalSleepColors.current
     val zone = ZoneId.systemDefault()
 
     // Build Mon–Sun week around the current session date
@@ -747,7 +832,8 @@ private fun ThisWeekSection(
     val cards = weekDays.map { date ->
         val s = sessionByDate[date]
         if (s != null) {
-            val d = computeStageDurations(s.stages)
+            val d     = computeStageDurations(s.stages)
+            val bouts = countWakeBouts(s.stages)
             WeekCard(
                 dayName      = date.format(DayNameFmt),
                 dayNum       = date.dayOfMonth.toString(),
@@ -755,6 +841,7 @@ private fun ThisWeekSection(
                 stageFracs   = stageFracsOf(d),
                 isCurrent    = s.id == currentId,
                 hasData      = true,
+                score        = computeSleepScore(d, bouts, s.fired_reason),
             )
         } else {
             WeekCard(
@@ -779,9 +866,9 @@ private fun ThisWeekSection(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment     = Alignment.CenterVertically,
         ) {
-            Text("This week", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = NightTextPrimary)
+            Text("This week", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = c.textPrimary)
             if (avgText.isNotEmpty()) {
-                Text(avgText, fontSize = 13.sp, color = NightTextAccent, fontWeight = FontWeight.Medium)
+                Text(avgText, fontSize = 13.sp, color = c.textAccent, fontWeight = FontWeight.Medium)
             }
         }
         Spacer(Modifier.height(12.dp))
@@ -798,20 +885,20 @@ private fun ThisWeekSection(
 
 @Composable
 private fun WeekMiniCard(card: WeekCard) {
-
+    val c = LocalSleepColors.current
     Column(
         modifier = Modifier
             .width(70.dp)
             .clip(RoundedCornerShape(18.dp))
             .background(
                 if (card.isCurrent)
-                    Brush.verticalGradient(listOf(NightPrimary.copy(0.20f), NightSurface))
+                    Brush.verticalGradient(listOf(c.primary.copy(0.20f), c.surface))
                 else
-                    Brush.verticalGradient(listOf(NightSurface, NightSurface)),
+                    Brush.verticalGradient(listOf(c.surface, c.surface)),
             )
             .then(
                 if (card.isCurrent)
-                    Modifier.border(1.dp, NightPrimary.copy(0.30f), RoundedCornerShape(18.dp))
+                    Modifier.border(1.dp, c.primary.copy(0.30f), RoundedCornerShape(18.dp))
                 else Modifier
             )
             .padding(vertical = 12.dp, horizontal = 6.dp),
@@ -821,32 +908,48 @@ private fun WeekMiniCard(card: WeekCard) {
         Text(
             card.dayName,
             fontSize   = 10.sp,
-            color      = if (card.isCurrent) NightPrimary.copy(0.9f) else NightTextSecondary,
+            color      = if (card.isCurrent) c.primary.copy(0.9f) else c.textSecondary,
             fontWeight = FontWeight.Medium,
         )
         Text(
             card.dayNum,
             fontSize   = 12.sp,
             fontWeight = FontWeight.Bold,
-            color      = if (card.isCurrent) NightPrimary else NightTextPrimary,
+            color      = if (card.isCurrent) c.primary else c.textPrimary,
         )
         Spacer(Modifier.height(4.dp))
 
-        // Score ring (score algorithm TBD)
+        // Score ring
+        val miniRingColor = if (card.hasData) scoreColor(card.score) else c.surface2
         Box(modifier = Modifier.size(44.dp), contentAlignment = Alignment.Center) {
             Canvas(modifier = Modifier.fillMaxSize()) {
                 val sw    = 3.5.dp.toPx()
                 val inset = sw / 2f
                 val rect  = Size(size.width - sw, size.height - sw)
                 drawArc(
-                    color      = NightSurface2,
+                    color      = c.surface2,
                     startAngle = -90f, sweepAngle = 360f,
                     useCenter  = false,
                     topLeft    = Offset(inset, inset), size = rect,
                     style      = Stroke(sw, cap = StrokeCap.Round),
                 )
+                if (card.hasData) {
+                    drawArc(
+                        color      = miniRingColor,
+                        startAngle = -90f,
+                        sweepAngle = 360f * (card.score / 100f),
+                        useCenter  = false,
+                        topLeft    = Offset(inset, inset), size = rect,
+                        style      = Stroke(sw, cap = StrokeCap.Round),
+                    )
+                }
             }
-            Text("–", fontSize = 14.sp, color = NightTextSecondary)
+            Text(
+                if (card.hasData) card.score.toString() else "–",
+                fontSize   = 14.sp,
+                fontWeight = if (card.hasData) FontWeight.Bold else FontWeight.Normal,
+                color      = if (card.hasData) miniRingColor else c.textSecondary,
+            )
         }
 
         // Tiny stage dots
@@ -872,7 +975,7 @@ private fun WeekMiniCard(card: WeekCard) {
         Text(
             if (card.hasData) formatDuration(card.durationMins) else "—",
             fontSize  = 10.sp,
-            color     = NightTextSecondary,
+            color     = c.textSecondary,
             textAlign = TextAlign.Center,
         )
     }
@@ -882,17 +985,19 @@ private fun WeekMiniCard(card: WeekCard) {
 
 @Composable
 private fun LoadingView() {
+    val c = LocalSleepColors.current
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text("🌙", fontSize = 40.sp)
             Spacer(Modifier.height(16.dp))
-            Text("Loading your nights…", fontSize = 14.sp, color = NightTextSecondary)
+            Text("Loading your nights…", fontSize = 14.sp, color = c.textSecondary)
         }
     }
 }
 
 @Composable
 private fun EmptyView() {
+    val c = LocalSleepColors.current
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(
             modifier            = Modifier.padding(40.dp),
@@ -904,14 +1009,14 @@ private fun EmptyView() {
                 "No nights recorded yet",
                 fontSize   = 20.sp,
                 fontWeight = FontWeight.Bold,
-                color      = NightTextPrimary,
+                color      = c.textPrimary,
                 textAlign  = TextAlign.Center,
             )
             Spacer(Modifier.height(10.dp))
             Text(
                 "Set a wake-up window tonight and your sleep history will appear here.",
                 fontSize   = 14.sp,
-                color      = NightTextSecondary,
+                color      = c.textSecondary,
                 textAlign  = TextAlign.Center,
                 lineHeight = 20.sp,
             )
