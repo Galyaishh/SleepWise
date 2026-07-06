@@ -21,6 +21,7 @@ data class DaySchedule(
     val smartAlarm: Boolean = true,
     val alarmSound: String = "Sunrise Chimes",
     val snoozeMinutes: Int = 9,
+    val alarmSoundUri: String? = null,
 ) {
     val windowStart: LocalTime get() = wakeTime.minusMinutes(windowMinutes.toLong())
 }
@@ -36,14 +37,16 @@ class SleepScheduleStore(private val context: Context) {
     private val KEY_WD_MIN    = intPreferencesKey("wd_wake_min")
     private val KEY_WD_WIN    = intPreferencesKey("wd_window")
     private val KEY_WD_SMART  = booleanPreferencesKey("wd_smart_alarm")
-    private val KEY_WD_SOUND  = stringPreferencesKey("wd_alarm_sound")
-    private val KEY_WD_SNOOZE = intPreferencesKey("wd_snooze")
-    private val KEY_WE_HOUR   = intPreferencesKey("we_wake_hour")
-    private val KEY_WE_MIN    = intPreferencesKey("we_wake_min")
-    private val KEY_WE_WIN    = intPreferencesKey("we_window")
-    private val KEY_WE_SMART  = booleanPreferencesKey("we_smart_alarm")
-    private val KEY_WE_SOUND  = stringPreferencesKey("we_alarm_sound")
-    private val KEY_WE_SNOOZE = intPreferencesKey("we_snooze")
+    private val KEY_WD_SOUND     = stringPreferencesKey("wd_alarm_sound")
+    private val KEY_WD_SOUND_URI = stringPreferencesKey("wd_alarm_sound_uri")
+    private val KEY_WD_SNOOZE    = intPreferencesKey("wd_snooze")
+    private val KEY_WE_HOUR      = intPreferencesKey("we_wake_hour")
+    private val KEY_WE_MIN       = intPreferencesKey("we_wake_min")
+    private val KEY_WE_WIN       = intPreferencesKey("we_window")
+    private val KEY_WE_SMART     = booleanPreferencesKey("we_smart_alarm")
+    private val KEY_WE_SOUND     = stringPreferencesKey("we_alarm_sound")
+    private val KEY_WE_SOUND_URI = stringPreferencesKey("we_alarm_sound_uri")
+    private val KEY_WE_SNOOZE    = intPreferencesKey("we_snooze")
 
     val schedule: Flow<SleepSchedule> = context.scheduleDataStore.data.map { prefs ->
         SleepSchedule(
@@ -53,6 +56,7 @@ class SleepScheduleStore(private val context: Context) {
                 smartAlarm    = prefs[KEY_WD_SMART] ?: true,
                 alarmSound    = prefs[KEY_WD_SOUND] ?: "Sunrise Chimes",
                 snoozeMinutes = prefs[KEY_WD_SNOOZE] ?: 9,
+                alarmSoundUri = prefs[KEY_WD_SOUND_URI],
             ),
             weekend = DaySchedule(
                 wakeTime      = LocalTime.of(prefs[KEY_WE_HOUR] ?: 9, prefs[KEY_WE_MIN] ?: 0),
@@ -60,6 +64,7 @@ class SleepScheduleStore(private val context: Context) {
                 smartAlarm    = prefs[KEY_WE_SMART] ?: true,
                 alarmSound    = prefs[KEY_WE_SOUND] ?: "Sunrise Chimes",
                 snoozeMinutes = prefs[KEY_WE_SNOOZE] ?: 9,
+                alarmSoundUri = prefs[KEY_WE_SOUND_URI],
             ),
         )
     }
@@ -72,6 +77,7 @@ class SleepScheduleStore(private val context: Context) {
             prefs[KEY_WD_SMART]  = day.smartAlarm
             prefs[KEY_WD_SOUND]  = day.alarmSound
             prefs[KEY_WD_SNOOZE] = day.snoozeMinutes
+            if (day.alarmSoundUri != null) prefs[KEY_WD_SOUND_URI] = day.alarmSoundUri
         }
     }
 
@@ -83,6 +89,7 @@ class SleepScheduleStore(private val context: Context) {
             prefs[KEY_WE_SMART]  = day.smartAlarm
             prefs[KEY_WE_SOUND]  = day.alarmSound
             prefs[KEY_WE_SNOOZE] = day.snoozeMinutes
+            if (day.alarmSoundUri != null) prefs[KEY_WE_SOUND_URI] = day.alarmSoundUri
         }
     }
 }

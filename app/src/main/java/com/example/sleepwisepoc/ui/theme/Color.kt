@@ -79,6 +79,50 @@ val NightTextAccent    = Color(0xFF9DA8E8)
 val NightSuccess       = Color(0xFF4ADE80)
 val NightWarning       = Color(0xFFFBBF24)
 
+// ─── Semantic app color tokens ────────────────────────────────────────────────
+
+data class AppColors(
+    val bg: Color,
+    val surface: Color,
+    val surface2: Color,
+    val border: Color,
+    val primary: Color,
+    val primaryEnd: Color,
+    val textPrimary: Color,
+    val textSecondary: Color,
+    val textAccent: Color,
+    val success: Color,
+    val warning: Color,
+)
+
+val nightAppColors = AppColors(
+    bg            = NightBg,
+    surface       = NightSurface,
+    surface2      = NightSurface2,
+    border        = NightBorder,
+    primary       = NightPrimary,
+    primaryEnd    = NightPrimaryEnd,
+    textPrimary   = NightTextPrimary,
+    textSecondary = NightTextSecondary,
+    textAccent    = NightTextAccent,
+    success       = NightSuccess,
+    warning       = NightWarning,
+)
+
+val dayAppColors = AppColors(
+    bg            = SleepBackground,
+    surface       = SleepSurface,
+    surface2      = SleepSurfaceVariant,
+    border        = Color(0xFFDDDAF0),
+    primary       = SleepPrimary,
+    primaryEnd    = SleepAccentStart,
+    textPrimary   = SleepOnBackground,
+    textSecondary = SleepTextSecondary,
+    textAccent    = SleepPrimary,
+    success       = SleepSuccess,
+    warning       = Color(0xFFD48B24),
+)
+
 // ─── Legacy (kept for backward compatibility with existing POC screens) ────────
 val Purple80    = Color(0xFFD0BCFF)
 val PurpleGrey80 = Color(0xFFCCC2DC)

@@ -36,12 +36,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.sleepwisepoc.ui.theme.NightBg
-import com.example.sleepwisepoc.ui.theme.NightPrimary
-import com.example.sleepwisepoc.ui.theme.NightPrimaryEnd
-import com.example.sleepwisepoc.ui.theme.NightSurface
-import com.example.sleepwisepoc.ui.theme.NightTextPrimary
-import com.example.sleepwisepoc.ui.theme.NightTextSecondary
+import com.example.sleepwisepoc.ui.theme.LocalSleepColors
 
 private data class OnboardingPage(
     val emoji: String,
@@ -74,6 +69,7 @@ private val pages = listOf(
 
 @Composable
 fun OnboardingScreen(onComplete: () -> Unit) {
+    val c = LocalSleepColors.current
     var page by remember { mutableIntStateOf(0) }
 
     Box(
@@ -83,8 +79,8 @@ fun OnboardingScreen(onComplete: () -> Unit) {
                 Brush.verticalGradient(
                     colorStops = arrayOf(
                         0f to Color(0xFF0D0F22),
-                        0.5f to NightBg,
-                        1f to NightBg,
+                        0.5f to c.bg,
+                        1f to c.bg,
                     )
                 )
             )
@@ -120,7 +116,7 @@ fun OnboardingScreen(onComplete: () -> Unit) {
                             .background(
                                 Brush.radialGradient(
                                     colors = listOf(
-                                        NightPrimary.copy(alpha = 0.25f),
+                                        c.primary.copy(alpha = 0.25f),
                                         Color.Transparent,
                                     )
                                 )
@@ -132,7 +128,7 @@ fun OnboardingScreen(onComplete: () -> Unit) {
                             modifier = Modifier
                                 .size(80.dp)
                                 .clip(CircleShape)
-                                .background(NightSurface),
+                                .background(c.surface),
                             contentAlignment = Alignment.Center,
                         ) {
                             Text(p.emoji, fontSize = 38.sp)
@@ -145,7 +141,7 @@ fun OnboardingScreen(onComplete: () -> Unit) {
                         text = p.title,
                         fontSize = 30.sp,
                         fontWeight = FontWeight.Bold,
-                        color = NightTextPrimary,
+                        color = c.textPrimary,
                         textAlign = TextAlign.Center,
                         lineHeight = 36.sp,
                     )
@@ -155,7 +151,7 @@ fun OnboardingScreen(onComplete: () -> Unit) {
                     Text(
                         text = p.description,
                         fontSize = 16.sp,
-                        color = NightTextSecondary,
+                        color = c.textSecondary,
                         textAlign = TextAlign.Center,
                         lineHeight = 24.sp,
                     )
@@ -172,7 +168,7 @@ fun OnboardingScreen(onComplete: () -> Unit) {
                         modifier = Modifier
                             .size(if (i == page) 24.dp else 8.dp, 8.dp)
                             .clip(RoundedCornerShape(4.dp))
-                            .background(if (i == page) NightPrimary else NightPrimary.copy(alpha = 0.3f))
+                            .background(if (i == page) c.primary else c.primary.copy(alpha = 0.3f))
                     )
                 }
             }
@@ -185,7 +181,7 @@ fun OnboardingScreen(onComplete: () -> Unit) {
                     .fillMaxWidth()
                     .height(58.dp)
                     .clip(RoundedCornerShape(50))
-                    .background(Brush.horizontalGradient(listOf(NightPrimary, NightPrimaryEnd)))
+                    .background(Brush.horizontalGradient(listOf(c.primary, c.primaryEnd)))
                     .clickable {
                         if (page < pages.lastIndex) page++ else onComplete()
                     },
@@ -195,7 +191,7 @@ fun OnboardingScreen(onComplete: () -> Unit) {
                     text = if (page < pages.lastIndex) "Next" else "Get Started",
                     fontSize = 16.sp,
                     fontWeight = FontWeight.SemiBold,
-                    color = NightTextPrimary,
+                    color = c.textPrimary,
                 )
             }
 
@@ -206,7 +202,7 @@ fun OnboardingScreen(onComplete: () -> Unit) {
                 Text(
                     text = "Skip",
                     fontSize = 14.sp,
-                    color = NightTextSecondary,
+                    color = c.textSecondary,
                     modifier = Modifier
                         .clickable { onComplete() }
                         .padding(8.dp),

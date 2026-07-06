@@ -36,11 +36,7 @@ import com.example.sleepwisepoc.profile.ProfileScreen
 import com.example.sleepwisepoc.report.SleepReportScreen
 import com.example.sleepwisepoc.schedule.ScheduleScreen
 import com.example.sleepwisepoc.tonight.TonightScreen
-import com.example.sleepwisepoc.ui.theme.NightBg
-import com.example.sleepwisepoc.ui.theme.NightBorder
-import com.example.sleepwisepoc.ui.theme.NightPrimary
-import com.example.sleepwisepoc.ui.theme.NightSurface
-import com.example.sleepwisepoc.ui.theme.NightTextSecondary
+import com.example.sleepwisepoc.ui.theme.LocalSleepColors
 import com.example.sleepwisepoc.ui.theme.SleepWisePOCTheme
 import androidx.compose.runtime.collectAsState
 
@@ -93,7 +89,8 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
-            SleepWisePOCTheme {
+            var darkTheme by remember { mutableStateOf(ThemeStore.isDark(this)) }
+            SleepWisePOCTheme(darkTheme = darkTheme) {
                 val authViewModel: AuthViewModel = viewModel()
                 val authState by authViewModel.state.collectAsState()
 
@@ -102,7 +99,14 @@ class MainActivity : ComponentActivity() {
                     AppRoute.ONBOARDING -> OnboardingScreen(onComplete = authViewModel::onOnboardingComplete)
                     AppRoute.AUTH       -> AuthScreen(viewModel = authViewModel)
                     AppRoute.SETUP      -> SetupWizardScreen(onComplete = authViewModel::onSetupComplete)
-                    AppRoute.MAIN       -> MainScaffold(onSignOut = authViewModel::signOut)
+                    AppRoute.MAIN       -> MainScaffold(
+                        onSignOut     = authViewModel::signOut,
+                        onToggleTheme = {
+                            val newDark = !darkTheme
+                            darkTheme = newDark
+                            ThemeStore.setDark(this, newDark)
+                        },
+                    )
                 }
             }
         }
@@ -117,11 +121,12 @@ class MainActivity : ComponentActivity() {
 // ─── Main app scaffold (after auth) ──────────────────────────────────────────
 
 @Composable
-private fun MainScaffold(onSignOut: () -> Unit = {}) {
+private fun MainScaffold(onSignOut: () -> Unit = {}, onToggleTheme: () -> Unit = {}) {
+    val c = LocalSleepColors.current
     var selectedTab by remember { mutableIntStateOf(0) }
     Scaffold(
         modifier = Modifier.fillMaxSize(),
-        containerColor = NightBg,
+        containerColor = c.bg,
         bottomBar = {
             SleepWiseNavBar(
                 selectedTab   = selectedTab,
@@ -133,7 +138,7 @@ private fun MainScaffold(onSignOut: () -> Unit = {}) {
             0 -> TonightScreen(modifier = Modifier.padding(innerPadding))
             1 -> SleepReportScreen(modifier = Modifier.padding(innerPadding))
             2 -> ScheduleScreen(modifier = Modifier.padding(innerPadding))
-            3 -> ProfileScreen(modifier = Modifier.padding(innerPadding), onSignOut = onSignOut)
+            3 -> ProfileScreen(modifier = Modifier.padding(innerPadding), onSignOut = onSignOut, onToggleTheme = onToggleTheme)
         }
     }
 }
@@ -142,8 +147,9 @@ private fun MainScaffold(onSignOut: () -> Unit = {}) {
 
 @Composable
 private fun SleepWiseNavBar(selectedTab: Int, onTabSelected: (Int) -> Unit) {
+    val c = LocalSleepColors.current
     NavigationBar(
-        containerColor = NightSurface,
+        containerColor = c.surface,
         tonalElevation = 0.dp,
     ) {
         data class NavItem(val label: String, val icon: androidx.compose.ui.graphics.vector.ImageVector)
@@ -161,11 +167,11 @@ private fun SleepWiseNavBar(selectedTab: Int, onTabSelected: (Int) -> Unit) {
                 label           = { Text(item.label) },
                 alwaysShowLabel = true,
                 colors          = NavigationBarItemDefaults.colors(
-                    selectedIconColor   = NightPrimary,
-                    selectedTextColor   = NightPrimary,
-                    unselectedIconColor = NightTextSecondary,
-                    unselectedTextColor = NightTextSecondary,
-                    indicatorColor      = NightSurface,
+                    selectedIconColor   = c.primary,
+                    selectedTextColor   = c.primary,
+                    unselectedIconColor = c.textSecondary,
+                    unselectedTextColor = c.textSecondary,
+                    indicatorColor      = c.surface,
                 ),
             )
         }
