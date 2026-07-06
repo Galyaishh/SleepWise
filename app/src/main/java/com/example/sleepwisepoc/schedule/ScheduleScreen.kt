@@ -2,7 +2,6 @@ package com.example.sleepwisepoc.schedule
 
 import android.app.Application
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -69,25 +68,14 @@ class ScheduleViewModel(application: Application) : AndroidViewModel(application
         viewModelScope, SharingStarted.WhileSubscribed(5000), SleepSchedule()
     )
 
-    fun saveWeekday(day: DaySchedule) = viewModelScope.launch { store.saveWeekday(day) }
-    fun saveWeekend(day: DaySchedule) = viewModelScope.launch { store.saveWeekend(day) }
+    /** Persist just the edited day (0=Sun … 6=Sat); other days are untouched. */
+    fun saveDay(dayIndex: Int, day: DaySchedule) = viewModelScope.launch { store.saveDay(dayIndex, day) }
 }
 
 // ─── Day-of-week constants ────────────────────────────────────────────────────
 
 private val DAY_LETTERS = listOf("S", "M", "T", "W", "T", "F", "S")
 private val DAY_NAMES   = listOf("Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday")
-
-/** 0=Sun,1=Mon…6=Sat. Israeli week: Sun–Thu = weekday; Fri/Sat = weekend. */
-private fun isWeekday(i: Int) = i in 0..4
-
-private fun sameAsText(selected: Int): String {
-    return if (isWeekday(selected)) {
-        (0..4).filter { it != selected }.joinToString(", ") { DAY_NAMES[it].take(3) }
-    } else {
-        if (selected == 5) "Sat" else "Fri"
-    }
-}
 
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
@@ -107,9 +95,8 @@ fun ScheduleScreen(
     var showSoundPicker by remember { mutableStateOf(false) }
     var showSnoozePicker by remember { mutableStateOf(false) }
 
-    val isWd  = isWeekday(selectedDay)
-    val day   = if (isWd) schedule.weekday else schedule.weekend
-    val onSave: (DaySchedule) -> Unit = if (isWd) viewModel::saveWeekday else viewModel::saveWeekend
+    val day   = schedule[selectedDay]
+    val onSave: (DaySchedule) -> Unit = { viewModel.saveDay(selectedDay, it) }
 
     if (showTimePicker) {
         SleepTimePickerDialog(
@@ -164,25 +151,19 @@ fun ScheduleScreen(
 
         // ── Day circle picker ──────────────────────────────────────────────────
         DayRowPicker(
-            selectedDay  = selectedDay,
-            weekdaySched = schedule.weekday,
-            weekendSched = schedule.weekend,
-            onSelect     = { selectedDay = it },
+            selectedDay = selectedDay,
+            schedule    = schedule,
+            onSelect    = { selectedDay = it },
         )
 
         Spacer(Modifier.height(10.dp))
 
-        // ── "Editing X · same as Y, Z" caption ────────────────────────────────
-        val sameAs = sameAsText(selectedDay)
+        // ── "Editing X" caption (each day is configured on its own) ────────────
         Text(
             text = buildAnnotatedString {
                 append("Editing ")
                 withStyle(SpanStyle(fontWeight = FontWeight.Bold, color = c.textPrimary)) {
                     append(DAY_NAMES[selectedDay])
-                }
-                append(" · same as ")
-                withStyle(SpanStyle(fontWeight = FontWeight.Bold, color = c.textPrimary)) {
-                    append(sameAs)
                 }
             },
             modifier  = Modifier.padding(horizontal = 24.dp),
@@ -294,8 +275,7 @@ fun ScheduleScreen(
 @Composable
 private fun DayRowPicker(
     selectedDay: Int,
-    weekdaySched: DaySchedule,
-    weekendSched: DaySchedule,
+    schedule: SleepSchedule,
     onSelect: (Int) -> Unit,
 ) {
     val c = LocalSleepColors.current
@@ -306,8 +286,7 @@ private fun DayRowPicker(
     ) {
         DAY_LETTERS.forEachIndexed { i, letter ->
             val isSelected = i == selectedDay
-            val sched      = if (isWeekday(i)) weekdaySched else weekendSched
-            val timeText   = sched.wakeTime.format(ShortTimeFmt)
+            val timeText   = schedule[i].wakeTime.format(ShortTimeFmt)
 
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -318,19 +297,7 @@ private fun DayRowPicker(
                     modifier = Modifier
                         .size(40.dp)
                         .clip(CircleShape)
-                        .background(
-                            when {
-                                isSelected -> c.primary
-                                isWeekday(i) == isWeekday(selectedDay) ->
-                                    c.surface2.copy(alpha = 0.6f)
-                                else -> c.surface
-                            }
-                        )
-                        .then(
-                            if (!isSelected && isWeekday(i) == isWeekday(selectedDay))
-                                Modifier.border(1.dp, c.primary.copy(0.25f), CircleShape)
-                            else Modifier
-                        ),
+                        .background(if (isSelected) c.primary else c.surface),
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
@@ -343,8 +310,7 @@ private fun DayRowPicker(
                 Text(
                     timeText,
                     fontSize = 10.sp,
-                    color    = if (isWeekday(i) == isWeekday(selectedDay))
-                        c.textPrimary else c.textSecondary,
+                    color    = if (isSelected) c.textPrimary else c.textSecondary,
                 )
             }
         }

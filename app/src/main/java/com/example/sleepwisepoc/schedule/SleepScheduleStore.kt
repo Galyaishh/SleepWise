@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import java.time.LocalDate
 import java.time.LocalTime
 
 private val Context.scheduleDataStore by preferencesDataStore(name = "schedule")
@@ -26,70 +27,68 @@ data class DaySchedule(
     val windowStart: LocalTime get() = wakeTime.minusMinutes(windowMinutes.toLong())
 }
 
+/**
+ * Per-day schedule. Index 0 = Sunday … 6 = Saturday — every weekday is configured
+ * independently. Defaults follow the Israeli work week (Sun–Thu 07:00 / Fri–Sat 09:00),
+ * but each day can be customised separately on the Schedule screen.
+ */
 data class SleepSchedule(
-    val weekday: DaySchedule = DaySchedule(LocalTime.of(7, 0), 30),
-    val weekend: DaySchedule = DaySchedule(LocalTime.of(9, 0), 45),
-)
+    val days: List<DaySchedule> = DEFAULT_DAYS,
+) {
+    operator fun get(dayIndex: Int): DaySchedule = days[dayIndex.coerceIn(0, 6)]
+
+    /** The DaySchedule that applies to a given calendar date (0=Sun … 6=Sat). */
+    fun forDate(date: LocalDate): DaySchedule = this[date.dayOfWeek.value % 7]
+
+    companion object {
+        val DEFAULT_DAYS: List<DaySchedule> = List(7) { i ->
+            if (i in 0..4) DaySchedule(LocalTime.of(7, 0), 30)
+            else DaySchedule(LocalTime.of(9, 0), 45)
+        }
+    }
+}
 
 class SleepScheduleStore(private val context: Context) {
 
-    private val KEY_WD_HOUR   = intPreferencesKey("wd_wake_hour")
-    private val KEY_WD_MIN    = intPreferencesKey("wd_wake_min")
-    private val KEY_WD_WIN    = intPreferencesKey("wd_window")
-    private val KEY_WD_SMART  = booleanPreferencesKey("wd_smart_alarm")
-    private val KEY_WD_SOUND     = stringPreferencesKey("wd_alarm_sound")
-    private val KEY_WD_SOUND_URI = stringPreferencesKey("wd_alarm_sound_uri")
-    private val KEY_WD_SNOOZE    = intPreferencesKey("wd_snooze")
-    private val KEY_WE_HOUR      = intPreferencesKey("we_wake_hour")
-    private val KEY_WE_MIN       = intPreferencesKey("we_wake_min")
-    private val KEY_WE_WIN       = intPreferencesKey("we_window")
-    private val KEY_WE_SMART     = booleanPreferencesKey("we_smart_alarm")
-    private val KEY_WE_SOUND     = stringPreferencesKey("we_alarm_sound")
-    private val KEY_WE_SOUND_URI = stringPreferencesKey("we_alarm_sound_uri")
-    private val KEY_WE_SNOOZE    = intPreferencesKey("we_snooze")
+    private fun kHour(d: Int)     = intPreferencesKey("d${d}_wake_hour")
+    private fun kMin(d: Int)      = intPreferencesKey("d${d}_wake_min")
+    private fun kWin(d: Int)      = intPreferencesKey("d${d}_window")
+    private fun kSmart(d: Int)    = booleanPreferencesKey("d${d}_smart_alarm")
+    private fun kSound(d: Int)    = stringPreferencesKey("d${d}_alarm_sound")
+    private fun kSoundUri(d: Int) = stringPreferencesKey("d${d}_alarm_sound_uri")
+    private fun kSnooze(d: Int)   = intPreferencesKey("d${d}_snooze")
 
     val schedule: Flow<SleepSchedule> = context.scheduleDataStore.data.map { prefs ->
-        SleepSchedule(
-            weekday = DaySchedule(
-                wakeTime      = LocalTime.of(prefs[KEY_WD_HOUR] ?: 7, prefs[KEY_WD_MIN] ?: 0),
-                windowMinutes = prefs[KEY_WD_WIN] ?: 30,
-                smartAlarm    = prefs[KEY_WD_SMART] ?: true,
-                alarmSound    = prefs[KEY_WD_SOUND] ?: "Sunrise Chimes",
-                snoozeMinutes = prefs[KEY_WD_SNOOZE] ?: 9,
-                alarmSoundUri = prefs[KEY_WD_SOUND_URI],
-            ),
-            weekend = DaySchedule(
-                wakeTime      = LocalTime.of(prefs[KEY_WE_HOUR] ?: 9, prefs[KEY_WE_MIN] ?: 0),
-                windowMinutes = prefs[KEY_WE_WIN] ?: 45,
-                smartAlarm    = prefs[KEY_WE_SMART] ?: true,
-                alarmSound    = prefs[KEY_WE_SOUND] ?: "Sunrise Chimes",
-                snoozeMinutes = prefs[KEY_WE_SNOOZE] ?: 9,
-                alarmSoundUri = prefs[KEY_WE_SOUND_URI],
-            ),
-        )
+        SleepSchedule(List(7) { i ->
+            val def = SleepSchedule.DEFAULT_DAYS[i]
+            DaySchedule(
+                wakeTime      = LocalTime.of(prefs[kHour(i)] ?: def.wakeTime.hour, prefs[kMin(i)] ?: def.wakeTime.minute),
+                windowMinutes = prefs[kWin(i)] ?: def.windowMinutes,
+                smartAlarm    = prefs[kSmart(i)] ?: def.smartAlarm,
+                alarmSound    = prefs[kSound(i)] ?: def.alarmSound,
+                snoozeMinutes = prefs[kSnooze(i)] ?: def.snoozeMinutes,
+                alarmSoundUri = prefs[kSoundUri(i)],
+            )
+        })
     }
 
-    suspend fun saveWeekday(day: DaySchedule) {
+    /** Persist a single day (0=Sun … 6=Sat) independently of the others. */
+    suspend fun saveDay(dayIndex: Int, day: DaySchedule) {
+        val d = dayIndex.coerceIn(0, 6)
         context.scheduleDataStore.edit { prefs ->
-            prefs[KEY_WD_HOUR]   = day.wakeTime.hour
-            prefs[KEY_WD_MIN]    = day.wakeTime.minute
-            prefs[KEY_WD_WIN]    = day.windowMinutes
-            prefs[KEY_WD_SMART]  = day.smartAlarm
-            prefs[KEY_WD_SOUND]  = day.alarmSound
-            prefs[KEY_WD_SNOOZE] = day.snoozeMinutes
-            if (day.alarmSoundUri != null) prefs[KEY_WD_SOUND_URI] = day.alarmSoundUri
+            prefs[kHour(d)]   = day.wakeTime.hour
+            prefs[kMin(d)]    = day.wakeTime.minute
+            prefs[kWin(d)]    = day.windowMinutes
+            prefs[kSmart(d)]  = day.smartAlarm
+            prefs[kSound(d)]  = day.alarmSound
+            prefs[kSnooze(d)] = day.snoozeMinutes
+            if (day.alarmSoundUri != null) prefs[kSoundUri(d)] = day.alarmSoundUri
         }
     }
 
-    suspend fun saveWeekend(day: DaySchedule) {
-        context.scheduleDataStore.edit { prefs ->
-            prefs[KEY_WE_HOUR]   = day.wakeTime.hour
-            prefs[KEY_WE_MIN]    = day.wakeTime.minute
-            prefs[KEY_WE_WIN]    = day.windowMinutes
-            prefs[KEY_WE_SMART]  = day.smartAlarm
-            prefs[KEY_WE_SOUND]  = day.alarmSound
-            prefs[KEY_WE_SNOOZE] = day.snoozeMinutes
-            if (day.alarmSoundUri != null) prefs[KEY_WE_SOUND_URI] = day.alarmSoundUri
-        }
-    }
+    /** Bulk-seed Sun–Thu (used by the first-run setup wizard for sensible defaults). */
+    suspend fun saveWeekdays(day: DaySchedule) { (0..4).forEach { saveDay(it, day) } }
+
+    /** Bulk-seed Fri–Sat (used by the first-run setup wizard for sensible defaults). */
+    suspend fun saveWeekends(day: DaySchedule) { (5..6).forEach { saveDay(it, day) } }
 }

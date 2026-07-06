@@ -161,7 +161,7 @@ fun SetupWizardScreen(onComplete: () -> Unit) {
                             step++
                         } else {
                             scope.launch {
-                                store.saveWeekday(
+                                store.saveWeekdays(
                                     DaySchedule(
                                         wakeTime      = weekdayTime,
                                         windowMinutes = 30,
@@ -169,7 +169,7 @@ fun SetupWizardScreen(onComplete: () -> Unit) {
                                         alarmSoundUri = selectedSoundUri,
                                     )
                                 )
-                                store.saveWeekend(
+                                store.saveWeekends(
                                     DaySchedule(
                                         wakeTime      = weekendTime,
                                         windowMinutes = 45,

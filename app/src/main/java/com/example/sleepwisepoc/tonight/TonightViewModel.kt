@@ -29,7 +29,6 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.LocalTime
 
@@ -69,11 +68,9 @@ class TonightViewModel(application: Application) : AndroidViewModel(application)
 
     val state = combine(store.schedule, _isTracking, _watchStatus, _isAlarmOnly) { schedule, tracking, watch, alarmOnly ->
         val tomorrow = LocalDate.now().plusDays(1)
-        val isWeekend = tomorrow.dayOfWeek == DayOfWeek.SATURDAY ||
-                tomorrow.dayOfWeek == DayOfWeek.SUNDAY
         TonightUiState(
             greeting    = greeting(),
-            schedule    = if (isWeekend) schedule.weekend else schedule.weekday,
+            schedule    = schedule.forDate(tomorrow),
             isTracking  = tracking,
             isAlarmOnly = alarmOnly,
             watchStatus = watch,
