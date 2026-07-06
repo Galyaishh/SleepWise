@@ -42,12 +42,15 @@ import java.time.ZoneId
  * Foreground service that monitors sleep stages during the user's wake-up window
  * and fires the smart alarm at the most favorable moment (Light sleep) within it.
  *
- * On emulator / debug: drives the predictor with mock epochs from
- * [TFLiteSleepPredictor.createMockEpoch] and ticks every [TICK_SEC_DEMO] seconds
- * so a window can play out in under a minute.
+ * Real device: builds 1-minute epochs from live sensor data — heart rate and
+ * accelerometer streamed off the watch (see [buildNewEpochsFromRealData] /
+ * [featuresFromWearSamples]) — and runs the on-device TFLite model on them.
+ * Prediction is event-driven: it runs when new watch data arrives and on an
+ * AlarmManager backstop tick (Doze-proof), not on a coroutine timer loop.
  *
- * Real-device path (HealthConnect → 30-feature epoch) is a TODO — the abstraction
- * boundary is [acquireEpoch].
+ * Emulator / debug only: falls back to mock epochs from
+ * [TFLiteSleepPredictor.createMockEpoch] and ticks every [TICK_SEC_DEMO] seconds
+ * so a window can play out in under a minute (gated on [Build.FINGERPRINT]).
  */
 class SleepMonitoringService : Service() {
 
