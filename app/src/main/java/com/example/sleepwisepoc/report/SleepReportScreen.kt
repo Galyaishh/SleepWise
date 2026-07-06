@@ -401,6 +401,7 @@ private fun NightPager(report: WeeklyReport, isDemoData: Boolean, onRefresh: () 
 
 @Composable
 private fun EmptyDay(modifier: Modifier = Modifier) {
+    val c = LocalSleepColors.current
     Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(
             modifier            = Modifier.padding(40.dp),
@@ -408,11 +409,11 @@ private fun EmptyDay(modifier: Modifier = Modifier) {
         ) {
             Text("😴", fontSize = 48.sp)
             Spacer(Modifier.height(16.dp))
-            Text("No sleep tracked", fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = NightTextPrimary)
+            Text("No sleep tracked", fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = c.textPrimary)
             Spacer(Modifier.height(8.dp))
             Text(
                 "Nothing recorded for this night.",
-                fontSize = 13.sp, color = NightTextSecondary, textAlign = TextAlign.Center,
+                fontSize = 13.sp, color = c.textSecondary, textAlign = TextAlign.Center,
             )
         }
     }
