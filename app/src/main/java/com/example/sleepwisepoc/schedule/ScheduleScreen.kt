@@ -2,7 +2,10 @@ package com.example.sleepwisepoc.schedule
 
 import android.app.Application
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -91,19 +94,32 @@ fun ScheduleScreen(
     val c = LocalSleepColors.current
     val schedule by viewModel.schedule.collectAsState()
     // selectedDay: 0=Sun … 6=Sat; default to Sunday (start of Israeli work week)
-    var selectedDay by remember { mutableIntStateOf(0) }
-    var showTimePicker  by remember { mutableStateOf(false) }
-    var showSoundPicker by remember { mutableStateOf(false) }
+    var selectedDay      by remember { mutableIntStateOf(0) }
+    var showTimePicker   by remember { mutableStateOf(false) }
+    var showSoundPicker  by remember { mutableStateOf(false) }
     var showSnoozePicker by remember { mutableStateOf(false) }
+    var isMultiSelect    by remember { mutableStateOf(false) }
+    var multiDays        by remember { mutableStateOf(emptySet<Int>()) }
 
     val day   = schedule[selectedDay]
     val onSave: (DaySchedule) -> Unit = { viewModel.saveDay(selectedDay, it) }
 
+    val pickerInitialTime = if (isMultiSelect && multiDays.isNotEmpty())
+        schedule[multiDays.min()].wakeTime
+    else
+        day.wakeTime
+
     if (showTimePicker) {
         SleepTimePickerDialog(
-            initialTime = day.wakeTime,
+            initialTime = pickerInitialTime,
             onConfirm = { time ->
-                onSave(day.copy(wakeTime = time))
+                if (isMultiSelect) {
+                    multiDays.forEach { d -> viewModel.saveDay(d, schedule[d].copy(wakeTime = time)) }
+                    isMultiSelect = false
+                    multiDays = emptySet()
+                } else {
+                    onSave(day.copy(wakeTime = time))
+                }
                 showTimePicker = false
             },
             onDismiss = { showTimePicker = false },
@@ -152,30 +168,78 @@ fun ScheduleScreen(
 
         // ── Day circle picker ──────────────────────────────────────────────────
         DayRowPicker(
-            selectedDay = selectedDay,
-            schedule    = schedule,
-            onSelect    = { selectedDay = it },
-        )
-
-        Spacer(Modifier.height(10.dp))
-
-        // ── "Editing X" caption (each day is configured on its own) ────────────
-        Text(
-            text = buildAnnotatedString {
-                append("Editing ")
-                withStyle(SpanStyle(fontWeight = FontWeight.Bold, color = c.textPrimary)) {
-                    append(DAY_NAMES[selectedDay])
-                }
+            selectedDay   = selectedDay,
+            schedule      = schedule,
+            isMultiSelect = isMultiSelect,
+            multiDays     = multiDays,
+            onSelect      = { selectedDay = it },
+            onToggle      = { d ->
+                val next = if (d in multiDays) multiDays - d else multiDays + d
+                multiDays = next
+                if (next.isEmpty()) isMultiSelect = false
             },
-            modifier  = Modifier.padding(horizontal = 24.dp),
-            fontSize  = 13.sp,
-            color     = c.textSecondary,
+            onLongPress   = { d ->
+                isMultiSelect = true
+                multiDays = multiDays + d
+            },
         )
 
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(8.dp))
 
-        // Wake time + window + smart alarm
-        SettingsCard {
+        if (isMultiSelect) {
+            // ── Multi-select action bar ────────────────────────────────────────
+            Row(
+                modifier = Modifier
+                    .padding(horizontal = 16.dp)
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(c.primary.copy(alpha = 0.12f))
+                    .padding(horizontal = 14.dp, vertical = 6.dp),
+                verticalAlignment     = Alignment.CenterVertically,
+            ) {
+                Text(
+                    if (multiDays.isEmpty()) "Tap days to select"
+                    else "${multiDays.size} day${if (multiDays.size != 1) "s" else ""} selected",
+                    fontSize = 13.sp,
+                    color    = c.textPrimary,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(
+                    onClick  = { if (multiDays.isNotEmpty()) showTimePicker = true },
+                    enabled  = multiDays.isNotEmpty(),
+                ) {
+                    Text("Set time", color = if (multiDays.isNotEmpty()) c.primary else c.textSecondary)
+                }
+                TextButton(onClick = { isMultiSelect = false; multiDays = emptySet() }) {
+                    Text("Cancel", color = c.textSecondary)
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+        } else {
+            Text(
+                "Hold a day to select multiple",
+                modifier = Modifier.padding(horizontal = 24.dp),
+                fontSize = 11.sp,
+                color    = c.textSecondary.copy(alpha = 0.7f),
+            )
+            Spacer(Modifier.height(8.dp))
+            // ── "Editing X" caption ────────────────────────────────────────────
+            Text(
+                text = buildAnnotatedString {
+                    append("Editing ")
+                    withStyle(SpanStyle(fontWeight = FontWeight.Bold, color = c.textPrimary)) {
+                        append(DAY_NAMES[selectedDay])
+                    }
+                },
+                modifier = Modifier.padding(horizontal = 24.dp),
+                fontSize = 13.sp,
+                color    = c.textSecondary,
+            )
+            Spacer(Modifier.height(16.dp))
+        }
+
+        // ── Single-day settings (hidden during multi-select) ──────────────────
+        if (!isMultiSelect) SettingsCard {
             SettingsRow(
                 label = "Wake-up time",
                 value = day.wakeTime.format(TimeFmt),
@@ -243,7 +307,7 @@ fun ScheduleScreen(
         Spacer(Modifier.height(16.dp))
 
         // Wake Experience
-        SettingsCard {
+        if (!isMultiSelect) SettingsCard {
             Text(
                 "WAKE EXPERIENCE",
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
@@ -273,11 +337,16 @@ fun ScheduleScreen(
 
 // ─── Day row picker ───────────────────────────────────────────────────────────
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun DayRowPicker(
     selectedDay: Int,
     schedule: SleepSchedule,
+    isMultiSelect: Boolean,
+    multiDays: Set<Int>,
     onSelect: (Int) -> Unit,
+    onToggle: (Int) -> Unit,
+    onLongPress: (Int) -> Unit,
 ) {
     val c = LocalSleepColors.current
     Row(
@@ -286,37 +355,59 @@ private fun DayRowPicker(
         verticalAlignment     = Alignment.Top,
     ) {
         DAY_LETTERS.forEachIndexed { i, letter ->
-            val isSelected = i == selectedDay
-            val timeText   = schedule[i].wakeTime.format(ShortTimeFmt)
+            val isSelected  = !isMultiSelect && i == selectedDay
+            val isChecked   = isMultiSelect && i in multiDays
+            val timeText    = schedule[i].wakeTime.format(ShortTimeFmt)
 
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(4.dp),
-                // No rectangular ripple over the whole column — selection is shown
-                // by the circle turning purple. Keeps the day tappable cleanly.
-                modifier = Modifier.clickable(
+                // Gal's multi-select (long-press to pick multiple days) + no
+                // rectangular ripple (selection is shown by the circle turning purple).
+                modifier = Modifier.combinedClickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
-                ) { onSelect(i) },
+                    onClick     = { if (isMultiSelect) onToggle(i) else onSelect(i) },
+                    onLongClick = { onLongPress(i) },
+                ),
             ) {
                 Box(
                     modifier = Modifier
                         .size(40.dp)
                         .clip(CircleShape)
-                        .background(if (isSelected) c.primary else c.surface),
+                        .background(
+                            when {
+                                isChecked  -> c.primary
+                                isSelected -> c.primary
+                                isMultiSelect -> c.surface2
+                                else       -> c.surface
+                            }
+                        )
+                        .then(
+                            if (isMultiSelect && !isChecked)
+                                Modifier.border(1.5.dp, c.border, CircleShape)
+                            else Modifier
+                        ),
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
                         letter,
                         fontSize   = 14.sp,
                         fontWeight = FontWeight.SemiBold,
-                        color      = if (isSelected) Color.White else c.textSecondary,
+                        color      = when {
+                            isChecked || isSelected -> Color.White
+                            else -> c.textSecondary
+                        },
                     )
                 }
                 Text(
                     timeText,
                     fontSize = 10.sp,
-                    color    = if (isSelected) c.textPrimary else c.textSecondary,
+                    color    = when {
+                        isChecked  -> c.primary
+                        isSelected -> c.textPrimary
+                        else       -> c.textSecondary
+                    },
                 )
             }
         }

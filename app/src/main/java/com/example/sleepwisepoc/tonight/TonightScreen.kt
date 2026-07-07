@@ -123,15 +123,7 @@ fun TonightScreen(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(
-                    Brush.verticalGradient(
-                        colorStops = arrayOf(
-                            0.0f to Color(0xFF0D0F22),
-                            0.4f to c.bg,
-                            1.0f to c.bg,
-                        )
-                    )
-                )
+                .background(c.bg)
         ) {
             Column(
                 modifier = Modifier
@@ -153,20 +145,6 @@ fun TonightScreen(
                         fontWeight = FontWeight.SemiBold,
                         color = c.textPrimary,
                     )
-                    Box(
-                        modifier = Modifier
-                            .size(40.dp)
-                            .clip(CircleShape)
-                            .background(c.surface),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            imageVector = Icons.Outlined.NotificationsNone,
-                            contentDescription = "Notifications",
-                            tint = c.textSecondary,
-                            modifier = Modifier.size(20.dp),
-                        )
-                    }
                 }
 
                 Spacer(Modifier.height(28.dp))
@@ -221,7 +199,7 @@ fun TonightScreen(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color(0xFF07080F).copy(alpha = 0.82f)),
+                    .background(Color.Black.copy(alpha = 0.5f)),
                 contentAlignment = Alignment.BottomCenter,
             ) {
                 AnimatedVisibility(
@@ -273,15 +251,7 @@ private fun NoWatchSheet(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
-            .background(
-                Brush.verticalGradient(
-                    colorStops = arrayOf(
-                        0f   to Color(0xFF1C2040),
-                        0.7f to Color(0xFF111428),
-                        1f   to c.bg,
-                    )
-                )
-            )
+            .background(c.surface)
             .padding(horizontal = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
@@ -463,18 +433,8 @@ private fun WakeUpCard(state: TonightUiState) {
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(24.dp))
-            .background(Brush.verticalGradient(colors = listOf(Color(0xFF1A1F3A), c.surface)))
+            .background(c.surface)
     ) {
-        Box(
-            modifier = Modifier
-                .size(180.dp)
-                .align(Alignment.TopEnd)
-                .background(
-                    Brush.radialGradient(
-                        colors = listOf(c.primary.copy(alpha = 0.12f), Color.Transparent)
-                    )
-                )
-        )
         Column(modifier = Modifier.padding(24.dp)) {
             Text(
                 text          = "Tomorrow's wake up",
