@@ -180,19 +180,20 @@ private fun computeSleepScore(
         else                                 -> 4   // <5h
     }
 
-    // Deep sleep (25 pts)
+    // Deep sleep (25 pts) — stricter bands so a full award is genuinely earned
     val deepPts = when {
-        deepPct >= 0.20f -> 25
-        deepPct >= 0.15f -> 18
-        deepPct >= 0.10f -> 10
-        else             -> 3
+        deepPct >= 0.22f -> 25
+        deepPct >= 0.17f -> 18
+        deepPct >= 0.12f -> 10
+        deepPct >= 0.07f -> 4
+        else             -> 2
     }
 
     // REM sleep (20 pts)
     val remPts = when {
-        remPct >= 0.20f -> 20
-        remPct >= 0.15f -> 14
-        remPct >= 0.10f -> 7
+        remPct >= 0.22f -> 20
+        remPct >= 0.17f -> 14
+        remPct >= 0.11f -> 7
         else            -> 2
     }
 
@@ -213,11 +214,13 @@ private fun computeSleepScore(
     // measurable. Renormalize over the components that DO apply
     // (Duration 30 + Deep 25 + Alarm 10 = 65) so a real tracked night isn't
     // structurally capped ~18 pts below the 4-class demo nights.
+    // Cap at 98: a perfect 100 reads as fake — even an excellent night tops out
+    // just short, so the score stays believable.
     val isBinary = d.remMins == 0L && d.awakeMins == 0L
     return if (isBinary) {
-        ((durPts + deepPts + alarmPts) * 100f / 65f).toInt().coerceIn(0, 100)
+        ((durPts + deepPts + alarmPts) * 100f / 65f).toInt().coerceIn(0, 98)
     } else {
-        (durPts + deepPts + remPts + wakePts + alarmPts).coerceIn(0, 100)
+        (durPts + deepPts + remPts + wakePts + alarmPts).coerceIn(0, 98)
     }
 }
 
@@ -450,7 +453,8 @@ private fun NightPage(
         // ── Hero ───────────────────────────────────────────────────────────────
         HeroSection(
             timeInBedMins = timeInBedMins,
-            sleepMins     = durations.sleepingMins,
+            // Total sleep can never exceed time in bed (guards gappy/backfilled epochs).
+            sleepMins     = minOf(durations.sleepingMins, timeInBedMins),
             bedText       = bedText,
             wakeText      = wakeText,
             winStartStr   = winStartStr,

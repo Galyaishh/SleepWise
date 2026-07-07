@@ -147,7 +147,7 @@ fun TonightScreen(
                     )
                 }
 
-                Spacer(Modifier.height(28.dp))
+                Spacer(Modifier.height(18.dp))
 
                 Text(
                     text = "${state.greeting} 🌙",
@@ -162,15 +162,15 @@ fun TonightScreen(
                     color = c.textSecondary,
                 )
 
-                Spacer(Modifier.height(24.dp))
+                Spacer(Modifier.height(18.dp))
 
                 WakeUpCard(state = state)
 
-                Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(12.dp))
 
                 ReadinessCard(state.watchStatus)
 
-                Spacer(Modifier.height(24.dp))
+                Spacer(Modifier.height(16.dp))
 
                 StartButton(
                     isTracking   = state.isTracking,

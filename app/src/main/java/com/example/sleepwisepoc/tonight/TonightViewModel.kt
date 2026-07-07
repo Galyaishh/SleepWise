@@ -67,10 +67,13 @@ class TonightViewModel(application: Application) : AndroidViewModel(application)
     }
 
     val state = combine(store.schedule, _isTracking, _watchStatus, _isAlarmOnly) { schedule, tracking, watch, alarmOnly ->
-        val tomorrow = LocalDate.now().plusDays(1)
+        // "Tonight's" wake-up. In the small hours (before noon) the next alarm is
+        // THIS morning, not tomorrow — otherwise at e.g. 00:50 the card would show
+        // the day *after* the coming morning.
+        val target = if (LocalTime.now().hour < 12) LocalDate.now() else LocalDate.now().plusDays(1)
         TonightUiState(
             greeting    = greeting(),
-            schedule    = schedule.forDate(tomorrow),
+            schedule    = schedule.forDate(target),
             isTracking  = tracking,
             isAlarmOnly = alarmOnly,
             watchStatus = watch,

@@ -1,0 +1,13 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Crescent moon (matches the app's 🌙). Adaptive-icon safe zone is the
+         centre ~66dp; the crescent is carved from two overlapping circles via
+         evenOdd fill so the background colour shows through the opening. -->
+    <path
+        android:fillType="evenOdd"
+        android:fillColor="#F6C453"
+        android:pathData="M24,54 a30,30 0 1,0 60,0 a30,30 0 1,0 -60,0 z M42,47 a25,25 0 1,0 50,0 a25,25 0 1,0 -50,0 z" />
+</vector>
