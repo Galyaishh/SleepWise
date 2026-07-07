@@ -740,7 +740,6 @@ private fun InsightsSection(insights: List<Insight>, modifier: Modifier = Modifi
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable { }
                         .padding(horizontal = 16.dp, vertical = 14.dp),
                     verticalAlignment     = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(14.dp),
@@ -769,11 +768,6 @@ private fun InsightsSection(insights: List<Insight>, modifier: Modifier = Modifi
                             lineHeight = 17.sp,
                         )
                     }
-                    Icon(
-                        Icons.Outlined.ChevronRight, null,
-                        tint     = c.textSecondary,
-                        modifier = Modifier.size(18.dp),
-                    )
                 }
                 if (index < insights.lastIndex) {
                     HorizontalDivider(

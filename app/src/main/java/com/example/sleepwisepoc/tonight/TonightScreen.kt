@@ -198,7 +198,7 @@ fun TonightScreen(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color(0xFF07080F).copy(alpha = 0.82f)),
+                    .background(Color.Black.copy(alpha = 0.5f)),
                 contentAlignment = Alignment.BottomCenter,
             ) {
                 AnimatedVisibility(
@@ -250,15 +250,7 @@ private fun NoWatchSheet(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
-            .background(
-                Brush.verticalGradient(
-                    colorStops = arrayOf(
-                        0f   to Color(0xFF1C2040),
-                        0.7f to Color(0xFF111428),
-                        1f   to c.bg,
-                    )
-                )
-            )
+            .background(c.surface)
             .padding(horizontal = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
