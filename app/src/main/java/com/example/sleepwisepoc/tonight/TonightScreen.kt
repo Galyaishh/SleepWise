@@ -437,7 +437,7 @@ private fun WakeUpCard(state: TonightUiState) {
     ) {
         Column(modifier = Modifier.padding(24.dp)) {
             Text(
-                text          = "Tomorrow's wake up",
+                text          = "Next wake-up",
                 fontSize      = 12.sp,
                 fontWeight    = FontWeight.Medium,
                 color         = c.textSecondary,
