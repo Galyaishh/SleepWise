@@ -369,26 +369,6 @@ private fun NightPager(report: WeeklyReport, isDemoData: Boolean, onRefresh: () 
             }
         }
 
-        if (isDemoData) {
-            Row(
-                modifier = Modifier
-                    .padding(horizontal = 16.dp, vertical = 4.dp)
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(c.primary.copy(alpha = 0.10f))
-                    .padding(horizontal = 12.dp, vertical = 6.dp),
-                verticalAlignment     = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Text("✦", fontSize = 10.sp, color = c.primary)
-                Text(
-                    "Demo data — connect your watch for real nights",
-                    fontSize = 11.sp,
-                    color    = c.textSecondary,
-                )
-            }
-        }
-
         // Page content: the day's night, or an empty state if nothing was tracked.
         val session = byDate[days[currentPage]]
         if (session != null) {
@@ -516,7 +496,7 @@ private fun HeroSection(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Brush.verticalGradient(listOf(Color(0xFF0E1235), Color(0xFF0A0C18)))),
+            .background(Brush.verticalGradient(listOf(c.surface, c.bg))),
     ) {
         // Ambient glow
         Box(
@@ -626,7 +606,7 @@ private fun SmartWakeBanner() {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Color(0xFF141829))
+            .background(c.surface)
             .padding(horizontal = 20.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp),
