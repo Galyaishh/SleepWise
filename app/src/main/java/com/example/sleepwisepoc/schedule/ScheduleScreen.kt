@@ -3,6 +3,7 @@ package com.example.sleepwisepoc.schedule
 import android.app.Application
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -291,7 +292,12 @@ private fun DayRowPicker(
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(4.dp),
-                modifier = Modifier.clickable { onSelect(i) },
+                // No rectangular ripple over the whole column — selection is shown
+                // by the circle turning purple. Keeps the day tappable cleanly.
+                modifier = Modifier.clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                ) { onSelect(i) },
             ) {
                 Box(
                     modifier = Modifier
