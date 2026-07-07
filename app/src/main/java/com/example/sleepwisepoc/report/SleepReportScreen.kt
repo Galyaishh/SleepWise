@@ -208,7 +208,17 @@ private fun computeSleepScore(
     // Smart-wake outcome (10 pts)
     val alarmPts = if (firedReason == "favorable") 10 else 0
 
-    return (durPts + deepPts + remPts + wakePts + alarmPts).coerceIn(0, 100)
+    // A binary session (on-device model emits only Light/Deep) has no REM or
+    // Awake data, so REM's 20 pts and the Wake component are not meaningfully
+    // measurable. Renormalize over the components that DO apply
+    // (Duration 30 + Deep 25 + Alarm 10 = 65) so a real tracked night isn't
+    // structurally capped ~18 pts below the 4-class demo nights.
+    val isBinary = d.remMins == 0L && d.awakeMins == 0L
+    return if (isBinary) {
+        ((durPts + deepPts + alarmPts) * 100f / 65f).toInt().coerceIn(0, 100)
+    } else {
+        (durPts + deepPts + remPts + wakePts + alarmPts).coerceIn(0, 100)
+    }
 }
 
 private fun scoreColor(score: Int): Color = when {
@@ -237,6 +247,9 @@ private fun generateInsights(
     val t       = d.totalMins.toFloat().coerceAtLeast(1f)
     val deepPct = d.deepMins / t
     val remPct  = d.remMins  / t
+    // Binary on-device model has no REM/Awake — don't emit REM insights for it
+    // (would always say "REM was shorter than usual").
+    val isBinary = d.remMins == 0L && d.awakeMins == 0L
 
     when (firedReason) {
         "favorable" -> list += Insight("✨", Color(0xFFFFD166),
@@ -246,7 +259,7 @@ private fun generateInsights(
             "Alarm fired at the end of your window.",
             "No light sleep moment was detected in time.")
     }
-    when {
+    if (!isBinary) when {
         remPct >= 0.22f -> list += Insight("🧠", StageColorREM,
             "REM sleep was strong last night.",
             "Memory and mood restoration was active.")
@@ -691,12 +704,14 @@ private fun StageSummaryRow(durations: StageDurations, modifier: Modifier = Modi
     val c = LocalSleepColors.current
     data class Item(val label: String, val mins: Long, val color: Color)
     val total = durations.totalMins.toFloat().coerceAtLeast(1f)
+    // Only show stages that actually have data — a binary (Light/Deep) night
+    // shouldn't render empty "Awake 0m 0%" / "REM 0m 0%" tiles.
     val items = listOf(
         Item("Awake", durations.awakeMins, StageColorAwake),
         Item("REM",   durations.remMins,   StageColorREM),
         Item("Light", durations.lightMins, StageColorLight),
         Item("Deep",  durations.deepMins,  StageColorDeep),
-    )
+    ).filter { it.mins > 0L }
     Row(
         modifier              = modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,

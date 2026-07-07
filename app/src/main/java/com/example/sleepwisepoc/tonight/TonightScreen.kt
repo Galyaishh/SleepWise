@@ -95,7 +95,8 @@ fun TonightScreen(
     // "Watch missing" now means strictly "no watch paired to this phone".
     // Paired-but-not-syncing (NoRecentData) is fine to start tracking — fresh
     // samples will arrive once Samsung Health flushes during the night.
-    val watchMissing = state.watchStatus == WatchStatus.Disconnected
+    val watchMissing = state.watchStatus == WatchStatus.Disconnected ||
+            state.watchStatus == WatchStatus.Emulator
 
     // Refresh watch status every time the user opens the Tonight tab so the
     // readiness card reflects fresh Samsung Health data, not a snapshot from
@@ -527,8 +528,10 @@ private fun ReadinessCard(watchStatus: WatchStatus) {
         WatchStatus.Connected    -> "Connected"            to true
         WatchStatus.NoRecentData -> "Paired, not syncing"  to false
         WatchStatus.Disconnected -> "No watch paired"      to false
+        WatchStatus.Emulator     -> "Emulator — demo mode (no watch)" to false
     }
     val trackingReady = watchStatus == WatchStatus.Connected
+    val isEmulatorMode = watchStatus == WatchStatus.Emulator
 
     Box(
         modifier = Modifier
@@ -544,7 +547,11 @@ private fun ReadinessCard(watchStatus: WatchStatus) {
             ReadinessRow(
                 icon  = Icons.Outlined.MonitorHeart,
                 title = "Sleep tracking",
-                value = if (trackingReady) "Ready" else "Waiting for watch",
+                value = when {
+                    trackingReady  -> "Ready"
+                    isEmulatorMode -> "Demo mode — simulated night"
+                    else           -> "Waiting for watch"
+                },
                 ok    = trackingReady,
             )
         }

@@ -32,7 +32,7 @@ import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.LocalTime
 
-enum class WatchStatus { Checking, Connected, NoRecentData, Disconnected }
+enum class WatchStatus { Checking, Connected, NoRecentData, Disconnected, Emulator }
 
 data class TonightUiState(
     val greeting: String = "Good evening",
@@ -92,7 +92,7 @@ class TonightViewModel(application: Application) : AndroidViewModel(application)
                 Build.HARDWARE.contains("ranchu", ignoreCase = true) ||
                 Build.HARDWARE.contains("goldfish", ignoreCase = true)
         if (isEmulator) {
-            _watchStatus.value = WatchStatus.Disconnected
+            _watchStatus.value = WatchStatus.Emulator
             return
         }
         // Step 1: BT pairing — definitive "no watch" check, independent of Samsung Health.

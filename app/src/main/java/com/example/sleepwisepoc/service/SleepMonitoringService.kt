@@ -48,9 +48,10 @@ import java.time.ZoneId
  * Prediction is event-driven: it runs when new watch data arrives and on an
  * AlarmManager backstop tick (Doze-proof), not on a coroutine timer loop.
  *
- * Emulator / debug only: falls back to mock epochs from
- * [TFLiteSleepPredictor.createMockEpoch] and ticks every [TICK_SEC_DEMO] seconds
- * so a window can play out in under a minute (gated on [Build.FINGERPRINT]).
+ * This service always runs on real watch data. On an emulator (no watch) it
+ * has no sensor source, so tracking only arms the fallback alarm. The compressed
+ * mock smart-wake demo lives separately in DemoScreen / DemoNightSimulator
+ * (surfaced as an emulator-only "Demo" tab), not in this service.
  */
 class SleepMonitoringService : Service() {
 

@@ -17,6 +17,8 @@ import androidx.compose.material.icons.outlined.Bedtime
 import androidx.compose.material.icons.outlined.CalendarMonth
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Person
+import androidx.compose.material.icons.outlined.Science
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -123,6 +125,12 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun MainScaffold(onSignOut: () -> Unit = {}, onToggleTheme: () -> Unit = {}) {
     val c = LocalSleepColors.current
+    val context = LocalContext.current
+    // The Demo tab is emulator-only: the presentation build gets a compressed
+    // (mock) smart-wake demo; the real prod phone stays clean and uses the live
+    // watch pipeline instead.
+    val showDemo = remember { isEmulatorBuild() }
+    val demoPredictor = remember { if (showDemo) TFLiteSleepPredictor(context).apply { initialize() } else null }
     var selectedTab by remember { mutableIntStateOf(0) }
     Scaffold(
         modifier = Modifier.fillMaxSize(),
@@ -131,6 +139,7 @@ private fun MainScaffold(onSignOut: () -> Unit = {}, onToggleTheme: () -> Unit =
             SleepWiseNavBar(
                 selectedTab   = selectedTab,
                 onTabSelected = { selectedTab = it },
+                showDemo      = showDemo,
             )
         },
     ) { innerPadding ->
@@ -139,26 +148,35 @@ private fun MainScaffold(onSignOut: () -> Unit = {}, onToggleTheme: () -> Unit =
             1 -> SleepReportScreen(modifier = Modifier.padding(innerPadding))
             2 -> ScheduleScreen(modifier = Modifier.padding(innerPadding))
             3 -> ProfileScreen(modifier = Modifier.padding(innerPadding), onSignOut = onSignOut, onToggleTheme = onToggleTheme)
+            4 -> DemoScreen(context = context, predictor = demoPredictor, onBack = { selectedTab = 0 })
         }
     }
 }
 
+/** True when running on an Android emulator (no real watch available). */
+private fun isEmulatorBuild(): Boolean =
+    android.os.Build.FINGERPRINT.contains("generic", ignoreCase = true) ||
+    android.os.Build.MODEL.contains("emulator", ignoreCase = true) ||
+    android.os.Build.HARDWARE.contains("ranchu", ignoreCase = true) ||
+    android.os.Build.HARDWARE.contains("goldfish", ignoreCase = true)
+
 // ─── Bottom navigation bar ────────────────────────────────────────────────────
 
 @Composable
-private fun SleepWiseNavBar(selectedTab: Int, onTabSelected: (Int) -> Unit) {
+private fun SleepWiseNavBar(selectedTab: Int, onTabSelected: (Int) -> Unit, showDemo: Boolean = false) {
     val c = LocalSleepColors.current
     NavigationBar(
         containerColor = c.surface,
         tonalElevation = 0.dp,
     ) {
         data class NavItem(val label: String, val icon: androidx.compose.ui.graphics.vector.ImageVector)
-        val items = listOf(
-            NavItem("Tonight",  Icons.Outlined.Home),
-            NavItem("Sleep",    Icons.Outlined.Bedtime),
-            NavItem("Schedule", Icons.Outlined.CalendarMonth),
-            NavItem("Profile",  Icons.Outlined.Person),
-        )
+        val items = buildList {
+            add(NavItem("Tonight",  Icons.Outlined.Home))
+            add(NavItem("Sleep",    Icons.Outlined.Bedtime))
+            add(NavItem("Schedule", Icons.Outlined.CalendarMonth))
+            add(NavItem("Profile",  Icons.Outlined.Person))
+            if (showDemo) add(NavItem("Demo", Icons.Outlined.Science))
+        }
         items.forEachIndexed { index, item ->
             NavigationBarItem(
                 selected        = selectedTab == index,
