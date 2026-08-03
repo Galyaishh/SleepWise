@@ -1,103 +1,142 @@
 # SleepWise Android — Handoff Brief
 
-Auto-loaded by Claude Code. Read this first, then `memory/MEMORY.md` (see below).
+Auto-loaded by Claude Code. Read this first.
+**Last verified against actual code: 2026-08-02 (full audit of all 3 repos).**
 
-## TL;DR (state at 2026-05-11 night)
+## TL;DR — actual state as of 2026-08-02
 
-- **This repo (`SleepWisenew`) = Android app.** Currently on branch `feature/updated_ui` (Gal's branch). Build passes (`./gradlew :app:assembleDebug`), no compile errors, three cosmetic deprecation warnings.
-- **Sibling repo `~/PycharmProjects/SleepWise-Backend/` = FastAPI server.** Built by a parallel Claude (Track B). Has bearer-token auth + SQLAlchemy/Postgres + JSON logs + Dockerfile + railway.toml. Not yet deployed to Railway.
-- **Project is no longer a POC** — the user reframed it as "production-grade, internal" on 2026-05-11 with ~3-4 days to ship. Final-project deadline driving everything.
-- **Old `main` branch** of this repo has 12 unpushed commits from the same Claude session (Room DB + production loop + history viz). They're a parallel implementation that became redundant once `feature/updated_ui` came in with a more polished UI. Do not delete `main` — it's a safety net.
+- **Android app** (this repo, branch `feature/light-mode-fixes`): builds and runs. Full Wear OS streaming pipeline implemented. Alarm ring path fully implemented.
+- **Backend** (`~/PycharmProjects/SleepWise-Backend/`): FastAPI, **deployed on Render** at `https://sleepwise-backend-8kvx.onrender.com/`. Custom bearer-token auth (not Firebase).
+- **ML model** (`~/PycharmProjects/SleepWise-model/`): Dense Neural Network trained on Walch 2019. Artifacts already shipped to `app/src/main/assets/`.
 
-## The two repos at a glance
+## Repo map
 
 ```
 ~/PycharmProjects/
-├── SleepWisenew/         ← THIS REPO. Android app (Kotlin/Gradle).
-│   └── feature/updated_ui   ← current branch. Auth + tabbed UI + alarm subsystem.
-├── SleepWise-Backend/    ← FastAPI server. Tracked separately on GitHub.
+├── SleepWise/              ← THIS REPO. Android app + Wear OS app (Kotlin/Gradle).
+├── SleepWise-Backend/      ← FastAPI server. Deployed on Render.
 │   └── server/{main,auth,db,logging_config}.py + Dockerfile + railway.toml
-└── SleepWise/            ← OLD Python ML repo (training, TFLite conversion, notebooks).
-                            Not actively touched in this sprint — model is already shipped
-                            as app/src/main/assets/sleep_stage_model.tflite.
+└── SleepWise-model/        ← ML training (Python/TensorFlow).
+    └── src/{build_final_model,features,load_sleepaccel,compare_datasets,...}.py
 ```
 
-## Where the durable context lives
+## Architecture (verified from code)
 
-Read these in order:
-1. `~/.claude/projects/-home-afik-s-PycharmProjects-SleepWisenew/memory/MEMORY.md` — index of all memory entries.
-2. `production_rebuild_may_2026.md` — sprint scope decision, Railway hosting choice, two-Claude collaboration model, architecture decisions for the production loop.
-3. `engineering_doc_commitments.md` — what the Jan 8 2026 מסמך הנדסי חלק ב commits to (edge-first, NFR3 offline alarm). Binding for grading.
-4. `server_api_contract.md` — locked API contract between Android and backend. Don't drift.
-5. `doc_change_log_entries.md` — Hebrew change-log rows to paste into טבלת ריכוז השינויים reconciling 7 doc-vs-code divergences.
-6. `project_sleepwise_overview.md` + `todo_production.md` — high-level overview and migration status of the two POC limitations (auth, deploy).
+```
+Galaxy Watch (Wear OS, minSdk=30)
+  └── wear/HrStreamService.kt
+        ├── ExerciseClient (WORKOUT type) → HEART_RATE_BPM continuous
+        ├── SensorManager (TYPE_ACCELEROMETER, SENSOR_DELAY_NORMAL ~200ms)
+        └── every 5s: MessageClient.sendMessage()
+              /sleepwise/hr   → "ts,bpm;ts,bpm;..."
+              /sleepwise/accel → "ts,|magnitude-9.81|;..."
 
-## Architecture map of `feature/updated_ui` (this branch)
+Android Phone
+  ├── wear/WearMessageListener.kt  (WearableListenerService, pathPrefix=/sleepwise)
+  │     ├── WearHrSource.appendBatch()    (rolling 1h buffer)
+  │     ├── WearAccelSource.appendBatch() (rolling buffer, g units)
+  │     └── SleepMonitoringService.onWearDataArrived()
+  │
+  └── service/SleepMonitoringService.kt  (ForegroundService, dataSync)
+        ├── Trigger A: every WearData push (event-driven)
+        ├── Trigger B: AlarmManager backstop setExactAndAllowWhileIdle every 5min
+        └── runPredictionPass():
+              featuresFromWearSamples() → 32 features (ANDROID_ORDER)
+              Samsung Health = FALLBACK only (secondary source)
+              TFLiteSleepPredictor.addEpoch() → predict()
+                Dense NN [Input(32)→Dense(64,ReLU)+Dropout→Dense(32,ReLU)+Dropout→Dense(2,Softmax)]
+                EMA α=0.3 | Hysteresis TO_DEEP=0.55 / TO_LIGHT=0.35 | Stability=3 consecutive
+              favorable = insideWindow AND epochAge<10min AND stage==Light AND isStable
+              if favorable → AlarmScheduler → AlarmRingService → AlarmRingingActivity
 
-Top-level packages under `app/src/main/java/com/example/sleepwisepoc/`:
+Backend (Render — https://sleepwise-backend-8kvx.onrender.com)
+  POST /devices/register  → {user_id (uuid4), token (random 32-byte)}
+  POST /sessions          → upload night data (Bearer token)
+  GET  /sessions/{id}/weekly → history
+  SQLite/Postgres via SQLAlchemy 2.0
+```
 
-- `MainActivity.kt` — splash/onboarding/auth/setup routing then tabbed `MainScaffold` (Tonight / Sleep / Schedule / Profile). Off-main-thread SDK init.
-- `auth/` — `SplashScreen`, `OnboardingScreen`, `AuthScreen`, `SetupWizardScreen`, `AuthViewModel`. The auth flow doesn't currently call the backend's `POST /devices/register` itself — that's done by `DeviceRepository.ensureRegistered()` (root-level file).
-- `tonight/` — `TonightScreen` + `TonightViewModel`. Reads `SleepScheduleStore`, tomorrow's day-of-week decides weekday-vs-weekend window, "Start tracking" calls `SleepMonitoringService.start(context, windowStart, wakeTime)`.
-- `schedule/` — `SleepSchedule` + `DaySchedule` data classes inline in `SleepScheduleStore.kt`. UI in `ScheduleScreen.kt` with weekday/weekend tabs and Material3 time picker.
-- `alarm/` — `AlarmScheduler`, `AlarmReceiver`, `AlarmViewModel`, `AlarmWindowStore`, `SmartAlarmScreen`. **NOTE:** Manifest declares `.alarm.AlarmRingService` and `.alarm.AlarmRingingActivity` but those files don't exist. They're not referenced from code so the build succeeds, but firing the alarm will NPE at runtime. Stub them when alarm path needs to work.
-- `service/SleepMonitoringService.kt` — foreground service, predict loop. Currently mock-epoch path; real HC integration is a TODO at the `acquireEpoch` boundary.
-- `report/` — `SleepReportScreen` + hypnogram viz + `SleepMockData`.
-- `profile/ProfileScreen.kt` — user profile.
-- `DeviceRepository.kt` + `DeviceStore.kt` — bearer-token registration (`POST /devices/register`) + DataStore persistence.
-- `SleepWiseApi.kt` — Retrofit client. Models: `SessionUpload`, `StageTick`, `SessionRecord`, `WeeklyReport`, `DeviceRegisterResponse`. Endpoints match `SleepWise-Backend/server/main.py`.
-- `SamsungHealthManager.kt` — Samsung Health Data SDK reads (from `libs/samsung-health-data-api-1.0.0.aar`). This is how the watch data gets in.
-- `TFLiteSleepPredictor.kt` — TFLite GRU + EMA + hysteresis. **This is the heart of the model.** Don't touch the smoothing parameters without a good reason — they were tuned (Tier 1 of the Jan 23 research backlog).
-- `DemoScreen.kt` + `DemoNightSimulator.kt` — mock-data demo path. Still useful for screenshots.
-- `HealthConnectManager.kt`, `PermissionsRationaleActivity.kt`, `SleepPredictor.kt` — present on this branch but DEAD CODE in practice. Health Connect was never wired (Samsung SDK is used directly); the rule-based `SleepPredictor` was the pre-TFLite stub.
+## File inventory (Android — app/src/main/java/com/example/sleepwisepoc/)
 
-## What's known to work
+| File | Status | Role |
+|---|---|---|
+| `MainActivity.kt` | Active | Auth routing → MainScaffold (4 tabs). Off-thread SDK init. |
+| `TFLiteSleepPredictor.kt` | Active | Dense NN inference + EMA + Hysteresis + Stability. `NUM_FEATURES=32`. |
+| `SleepWiseApi.kt` + `ApiClient` | Active | Retrofit. `PROD_BASE_URL = https://sleepwise-backend-8kvx.onrender.com/`. Firebase ID token as Bearer (see auth note). |
+| `SamsungHealthManager.kt` | Active (fallback) | HR + temp reads. Secondary source only. |
+| `service/SleepMonitoringService.kt` | Active | Core prediction loop (event-driven + backstop). |
+| `service/SessionLog.kt` | Active | File-backed session logger. |
+| `wear/WearHrSource.kt` | Active | Primary HR buffer (1h rolling). |
+| `wear/WearAccelSource.kt` | Active | Accel buffer. acc_std + acc_move_ratio in g. MOVE_THRESH_G=0.02f. |
+| `wear/WearMessageListener.kt` | Active | WearableListenerService. Receives HR/accel batches. |
+| `wear/WearCommand.kt` | Active | Sends start/stop to watch. |
+| `wear/WearProtocol.kt` | Active | Paths + codec. |
+| `alarm/AlarmScheduler.kt` | Active | setExactAndAllowWhileIdle (REQUEST_CODE 42=alarm, 43=tick). |
+| `alarm/AlarmReceiver.kt` | Active | BroadcastReceiver: ACTION_FIRE_ALARM → AlarmRingService; ACTION_TICK → triggerTick(). |
+| `alarm/AlarmRingService.kt` | **Fully implemented** | Looping MediaPlayer + VibrationEffect + wake lock. Auto-release after 5min. |
+| `alarm/AlarmRingingActivity.kt` | **Fully implemented** | Over-lock-screen dismiss UI. |
+| `auth/` | Active | Firebase Auth (email+password + Google via CredentialManager). |
+| `tonight/`, `schedule/`, `report/`, `profile/` | Active | UI tabs. |
+| `ThemeStore.kt` | Active | Dark/light mode SharedPreferences. |
+| `HealthConnectManager.kt` | **DEAD CODE** | Never called. |
+| `SleepPredictor.kt` | **DEAD CODE** | Old rule-based stub. Never called. |
+| `DemoScreen.kt`, `DemoNightSimulator.kt` | Demo only | Screenshot path. |
+| `PermissionsRationaleActivity.kt` | Manifest-only | Health Connect rationale for system; not in production flow. |
+| `DeviceRepository.kt`, `DeviceStore.kt` | **DO NOT EXIST** | Mentioned in old docs. Files not present in repo. |
 
-- Compile + assembleDebug + testDebugUnitTest all green.
-- Auth flow renders.
-- Tabbed nav.
-- `TFLiteSleepPredictor` shipped Tier 1 smoothing on 2026-03-24 (EMA α=0.3, hysteresis 0.55/0.35).
-- `DeviceRepository` flow: app→backend `/devices/register`→token in DataStore→OkHttp interceptor adds `Authorization: Bearer …`.
-- Backend repo has Dockerfile + railway.toml ready.
+## Wear OS module (wear/)
 
-## What's known broken or open
+- `wear/MainActivity.kt` — minimal launcher, requests BODY_SENSORS.
+- `wear/HrStreamService.kt` — ExerciseClient + SensorManager + 5s MessageClient flush.
+- `wear/PhoneCommandListener.kt` — WearableListenerService. /cmd/start → start HrStreamService.
+- `wear/WearProtocol.kt` — same codec as phone side.
 
-- **Alarm-ring runtime path** — `AlarmRingService` + `AlarmRingingActivity` declared in manifest, not implemented. The alarm subsystem otherwise compiles but can't actually ring.
-- **No real device test yet** — NFR3 (alarm fires with Wi-Fi+cellular off) is binding from the engineering doc but hasn't been verified.
-- **Backend not deployed to Railway** — Dockerfile and railway.toml exist; needs a `railway up` (or the GitHub-deploy click) and then update `ApiClient`'s `BASE_URL`. Watch the $5 free credit cap.
-- **Android `BASE_URL` may still point at LAN IP** — verify in `SleepWiseApi.kt` before the demo.
-- **`SleepMonitoringService.acquireEpoch` is mock-only** — real Samsung Health → 30-feature epoch path is a TODO at that boundary.
-- **Doc reconciliation entries not yet pasted into the actual engineering doc** — they're drafted in `memory/doc_change_log_entries.md` but the Hebrew document file lives outside the repos (probably a Google Doc).
+## ML Model (SleepWise-model/src/)
 
-## What to do next (priority order)
+**Deployed model produced by:** `build_final_model.py`
 
-1. **Stub `AlarmRingService` and `AlarmRingingActivity`** so the alarm path can fire. Even a 50-line stub that plays the default alarm tone and shows over the lock screen is enough.
-2. **Deploy the backend.** Inside `~/PycharmProjects/SleepWise-Backend/`, run `railway up` (assuming the user has linked the project). Get the HTTPS URL, swap into `ApiClient.DEFAULT_BASE_URL`, drop `android:usesCleartextTraffic="true"` from the manifest.
-3. **Wire the real-sensor `acquireEpoch` in `SleepMonitoringService`** — port the `samsung.processDataIntoEpochs(hoursBack = 1)` + `epochToFeatures(...)` calls.
-4. **NFR3 device test** — plug in a real device, set a 5-minute fake window, airplane-mode it, confirm alarm fires.
-5. **Push the doc change-log entries into the actual engineering doc** (the Hebrew file).
+- **Dataset:** Walch 2019 sleep-accel (PhysioNet, 31 healthy subjects, Apple Watch + PSG). NOT DREAMT.
+- **Architecture:** `Input(32) → Dense(64,ReLU) + Dropout(0.3) → Dense(32,ReLU) + Dropout(0.2) → Dense(2,Softmax)`. **No GRU. No LSTM. No recurrence.**
+- **Label scheme:** `binary_n3` — Deep=N3 only; Light=W+N1+N2+REM.
+- **CV:** Grouped 5-fold by participant_id. Deep Recall=83%, Precision=24%.
+- **Class weights:** balanced + Deep×1.5.
+- **Normalization:** StandardScaler params in `tflite_metadata.json`.
+- **Artifacts:** `sleep_stage_model.tflite` + `tflite_metadata.json` → `app/src/main/assets/`.
+- `train_accel_dense.py` — trains on DREAMT. **Not the deployed model.**
+- `compare_datasets.py` — documents why Walch was chosen over DREAMT.
+
+## Auth flow (important — has a mismatch)
+
+- Backend auth: custom UUID token (`POST /devices/register` → `{user_id, token}`). Stored in `devices` table. **Not Firebase.**
+- Android `ApiClient`: fetches Firebase ID token and injects as `Authorization: Bearer`.
+- **These are different token types.** The bridge (`DeviceRepository.ensureRegistered()`) is missing from the repo. The auth flow may not work end-to-end without it. The `shouldWake` field in `SleepPrediction` is computed but never read by `SleepMonitoringService` (service has its own `favorable` logic).
+
+## Known open issues (from code audit)
+
+- `TFLiteSleepPredictor.kt` header comment still says "DREAMT" and "46 features" — wrong, needs fixing.
+- `server/main.py` docstring says "TFLite GRU" — wrong.
+- `android:usesCleartextTraffic="true"` still in manifest — should be removed (backend is HTTPS).
+- `DeviceRepository` / auth bridge missing.
+- `shouldWake` in `SleepPrediction` computed but unused.
+- `WearAccelSource` has two thresholds in two units (`MOVEMENT_THRESHOLD_M_S2=0.5` and `MOVE_THRESH_G=0.02`) for different purposes — not a bug but confusing.
 
 ## Quick commands
 
 ```bash
 # Build
-JAVA_HOME=/snap/android-studio/current/jbr ANDROID_HOME=/home/afik.s/Android/Sdk \
+JAVA_HOME=/snap/android-studio/current/jbr ANDROID_HOME=/home/gal.yaish/Android/Sdk \
   ./gradlew :app:assembleDebug
 
-# Unit tests
-JAVA_HOME=/snap/android-studio/current/jbr ANDROID_HOME=/home/afik.s/Android/Sdk \
-  ./gradlew :app:testDebugUnitTest
-
-# Connected device install (when device is plugged in)
+# Install on device
 ~/Android/Sdk/platform-tools/adb install -r app/build/outputs/apk/debug/app-debug.apk
 
-# See what's pending on the OLD main branch (safety net of an earlier rebuild)
-git log --oneline origin/main..main
+# Backend is live at:
+# https://sleepwise-backend-8kvx.onrender.com/
 ```
 
 ## Conventions
 
 - Off-main-thread SDK init in `MainActivity.onCreate` is intentional — Samsung Health SDK on emulator crashes `system_server`. The `isEmulator` guard is load-bearing.
-- Health Connect permissions in the manifest exist but the app uses Samsung Health Data SDK directly. Don't be tempted to delete those manifest entries without checking nothing else in the team's checked-out code depends on them.
-- Cross-midnight wake windows are NOT supported (e.g., 23:30→06:00). `DaySchedule.windowStart` is derived as `wakeTime - windowMinutes` and the slider only goes 15–60 minutes, so this is fine by construction.
-- The user (`afik.s@razor-labs.com`) is on the Android side. Their partner `Gal` is on this same repo via GitHub. Be careful about pushing to `main` — open a branch.
+- Cross-midnight wake windows are NOT supported. `windowStart = wakeTime - windowMinutes`, slider 15–60 min only.
+- Primary HR source = Wear OS (`WearHrSource`). Samsung Health = fallback. Do not assume Samsung is primary.
+- The model is a **Dense NN** — stateless inference, no hidden state. Temporal context comes from lag/rolling features in the 32-feature vector, not recurrence.

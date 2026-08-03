@@ -11,13 +11,13 @@ import java.nio.channels.FileChannel
 /**
  * TensorFlow Lite based Sleep Stage Predictor
  *
- * Uses a model trained on real sleep data (DREAMT dataset) to predict
- * sleep stages from physiological sensor data.
+ * Uses a Dense Neural Network trained on Walch 2019 (sleep-accel, PhysioNet,
+ * 31 healthy subjects, Apple Watch + PSG) to predict sleep stages.
  *
- * Binary Classification: Deep (N3+REM) vs Not Deep (Wake+N1+N2)
+ * Binary Classification: Deep (N3 only) vs Light (Wake+N1+N2+REM)
  *
- * Input: Sequence of 5 epochs (5 minutes at 1-min epochs), each with 46 features
- * Output: Probabilities for [Deep, Not Deep]
+ * Input: 5 epochs × 32 features (ANDROID_ORDER) — see tflite_metadata.json
+ * Output: Probabilities for [Deep, Light]
  */
 class TFLiteSleepPredictor(private val context: Context) {
 
@@ -70,7 +70,7 @@ class TFLiteSleepPredictor(private val context: Context) {
     /**
      * Base epoch features (12 features) - before temporal features
      * Focused on what Galaxy Watch 5 can provide: HR and Temperature
-     * (HRV removed - not available in DREAMT training data)
+     * (HRV not used — not reliably available from ExerciseClient on Galaxy Watch)
      */
     data class EpochFeatures(
         // HR features (9)
@@ -335,7 +335,7 @@ class TFLiteSleepPredictor(private val context: Context) {
         emaDeepProb = EMA_ALPHA * rawDeepProb + (1f - EMA_ALPHA) * emaDeepProb
 
         // === HYSTERESIS THRESHOLDS ===
-        // Use different thresholds for entering vs leaving a state
+        // Use different thresholds for entergit ing vs leaving a state
         // This prevents rapid oscillation between Deep and Light
         val previousState = currentState
         val predictedClass = when {
@@ -420,12 +420,11 @@ class TFLiteSleepPredictor(private val context: Context) {
     }
 
     /**
-     * Create mock epoch features based on ACTUAL DREAMT training data distributions:
-     * - Deep: hr_mean=67.1±4, temp=35.0
-     * - Light: hr_mean=70.9±10.8, temp=34.1
+     * Create mock epoch features based on Walch 2019 training data distributions:
+     * - Deep: hr_mean~60-68, temp=34.0 (constant)
+     * - Light: hr_mean~68-80, temp=34.0 (constant)
      *
-     * FIXED: Made ranges NON-OVERLAPPING for clearer distinction
-     * Only HR and Temperature features (no HRV - matches Galaxy Watch 5 available data)
+     * Only HR and Temperature features (no HRV — matches Galaxy Watch ExerciseClient data)
      */
     fun createMockEpoch(scenario: String, epochIndex: Int, totalEpochs: Int): EpochFeatures {
         val random = java.util.Random()
