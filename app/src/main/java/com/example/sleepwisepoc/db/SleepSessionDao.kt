@@ -18,4 +18,7 @@ interface SleepSessionDao {
 
     @Query("SELECT * FROM sleep_sessions WHERE uploadStatus = 'PENDING' ORDER BY createdAt ASC")
     suspend fun getPending(): List<SleepSessionEntity>
+
+    @Query("SELECT * FROM sleep_sessions WHERE id = :id")
+    suspend fun getById(id: Long): SleepSessionEntity?
 }
