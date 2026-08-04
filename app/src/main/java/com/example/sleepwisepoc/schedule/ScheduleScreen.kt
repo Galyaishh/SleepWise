@@ -1,6 +1,12 @@
 package com.example.sleepwisepoc.schedule
 
+import android.app.Activity
 import android.app.Application
+import android.media.RingtoneManager
+import android.net.Uri
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -47,6 +53,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -92,14 +99,34 @@ fun ScheduleScreen(
     viewModel: ScheduleViewModel = viewModel(),
 ) {
     val c = LocalSleepColors.current
+    val context = LocalContext.current
     val schedule by viewModel.schedule.collectAsState()
     // selectedDay: 0=Sun … 6=Sat; default to Sunday (start of Israeli work week)
     var selectedDay      by remember { mutableIntStateOf(0) }
     var showTimePicker   by remember { mutableStateOf(false) }
-    var showSoundPicker  by remember { mutableStateOf(false) }
     var showSnoozePicker by remember { mutableStateOf(false) }
     var isMultiSelect    by remember { mutableStateOf(false) }
     var multiDays        by remember { mutableStateOf(emptySet<Int>()) }
+
+    val soundPickerLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val uri: Uri? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                result.data?.getParcelableExtra(RingtoneManager.EXTRA_RINGTONE_PICKED_URI, Uri::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                result.data?.getParcelableExtra(RingtoneManager.EXTRA_RINGTONE_PICKED_URI)
+            }
+            val day = schedule[selectedDay]
+            if (uri != null) {
+                val title = RingtoneManager.getRingtone(context, uri)?.getTitle(context) ?: "Custom"
+                viewModel.saveDay(selectedDay, day.copy(alarmSound = title, alarmSoundUri = uri.toString()))
+            } else {
+                viewModel.saveDay(selectedDay, day.copy(alarmSound = "Silent", alarmSoundUri = ""))
+            }
+        }
+    }
 
     val day   = schedule[selectedDay]
     val onSave: (DaySchedule) -> Unit = { viewModel.saveDay(selectedDay, it) }
@@ -123,16 +150,6 @@ fun ScheduleScreen(
                 showTimePicker = false
             },
             onDismiss = { showTimePicker = false },
-        )
-    }
-
-    if (showSoundPicker) {
-        PickerDialog(
-            title = "Alarm Sound",
-            options = ALARM_SOUNDS,
-            selected = day.alarmSound,
-            onSelect = { onSave(day.copy(alarmSound = it)); showSoundPicker = false },
-            onDismiss = { showSoundPicker = false },
         )
     }
 
@@ -317,11 +334,29 @@ fun ScheduleScreen(
                 letterSpacing = 1.sp,
             )
             HorizontalDivider(color = c.border, thickness = 0.5.dp)
+            val displaySoundName = remember(day.alarmSoundUri, context) {
+                if (day.alarmSoundUri.isNullOrEmpty()) {
+                    val uri = RingtoneManager.getActualDefaultRingtoneUri(context, RingtoneManager.TYPE_ALARM)
+                    RingtoneManager.getRingtone(context, uri)?.getTitle(context) ?: "Default Alarm"
+                } else {
+                    day.alarmSound
+                }
+            }
             SettingsRow(
                 label = "Alarm Sound",
-                value = day.alarmSound,
+                value = displaySoundName,
                 valueColor = c.success,
-                onClick = { showSoundPicker = true },
+                onClick = {
+                    val currentUri = day.alarmSoundUri?.takeIf { it.isNotEmpty() }?.let { Uri.parse(it) }
+                    val intent = android.content.Intent(RingtoneManager.ACTION_RINGTONE_PICKER).apply {
+                        putExtra(RingtoneManager.EXTRA_RINGTONE_TYPE, RingtoneManager.TYPE_ALARM)
+                        putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_DEFAULT, true)
+                        putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_SILENT, false)
+                        putExtra(RingtoneManager.EXTRA_RINGTONE_TITLE, "Alarm Sound")
+                        if (currentUri != null) putExtra(RingtoneManager.EXTRA_RINGTONE_EXISTING_URI, currentUri)
+                    }
+                    soundPickerLauncher.launch(intent)
+                },
             )
             HorizontalDivider(color = c.border, thickness = 0.5.dp)
             SettingsRow(

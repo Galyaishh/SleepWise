@@ -23,6 +23,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -93,22 +95,24 @@ class MainActivity : ComponentActivity() {
         setContent {
             var darkTheme by remember { mutableStateOf(ThemeStore.isDark(this)) }
             SleepWisePOCTheme(darkTheme = darkTheme) {
-                val authViewModel: AuthViewModel = viewModel()
-                val authState by authViewModel.state.collectAsState()
+                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                    val authViewModel: AuthViewModel = viewModel()
+                    val authState by authViewModel.state.collectAsState()
 
-                when (authState.screen) {
-                    AppRoute.SPLASH     -> SplashScreen()
-                    AppRoute.ONBOARDING -> OnboardingScreen(onComplete = authViewModel::onOnboardingComplete)
-                    AppRoute.AUTH       -> AuthScreen(viewModel = authViewModel)
-                    AppRoute.SETUP      -> SetupWizardScreen(onComplete = authViewModel::onSetupComplete)
-                    AppRoute.MAIN       -> MainScaffold(
-                        onSignOut     = authViewModel::signOut,
-                        onToggleTheme = {
-                            val newDark = !darkTheme
-                            darkTheme = newDark
-                            ThemeStore.setDark(this, newDark)
-                        },
-                    )
+                    when (authState.screen) {
+                        AppRoute.SPLASH     -> SplashScreen()
+                        AppRoute.ONBOARDING -> OnboardingScreen(onComplete = authViewModel::onOnboardingComplete)
+                        AppRoute.AUTH       -> AuthScreen(viewModel = authViewModel)
+                        AppRoute.SETUP      -> SetupWizardScreen(onComplete = authViewModel::onSetupComplete)
+                        AppRoute.MAIN       -> MainScaffold(
+                            onSignOut     = authViewModel::signOut,
+                            onToggleTheme = {
+                                val newDark = !darkTheme
+                                darkTheme = newDark
+                                ThemeStore.setDark(this, newDark)
+                            },
+                        )
+                    }
                 }
             }
         }

@@ -10,6 +10,7 @@ import android.content.pm.ServiceInfo
 import android.media.AudioAttributes
 import android.media.MediaPlayer
 import android.media.RingtoneManager
+import android.net.Uri
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
@@ -18,7 +19,15 @@ import android.os.Vibrator
 import android.os.VibratorManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import com.example.sleepwisepoc.schedule.SleepScheduleStore
 import com.example.sleepwisepoc.service.SessionLog
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import java.time.LocalDate
 
 /**
  * Foreground service that ACTUALLY rings the alarm — a looping ringtone on the
@@ -36,6 +45,7 @@ class AlarmRingService : Service() {
     private var mediaPlayer: MediaPlayer? = null
     private var vibrator: Vibrator? = null
     private var wakeLock: PowerManager.WakeLock? = null
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -57,8 +67,13 @@ class AlarmRingService : Service() {
         ensureChannel()
         startForegroundWithNotification()
         acquireWakeLock()
-        startSound()
         startVibration()
+        scope.launch {
+            val uriStr = SleepScheduleStore(this@AlarmRingService).schedule.first()
+                .forDate(LocalDate.now()).alarmSoundUri
+            val preferredUri = uriStr?.takeIf { it.isNotEmpty() }?.let { Uri.parse(it) }
+            startSound(preferredUri)
+        }
     }
 
     private fun startForegroundWithNotification() {
@@ -94,8 +109,9 @@ class AlarmRingService : Service() {
         }
     }
 
-    private fun startSound() {
-        val uri = RingtoneManager.getActualDefaultRingtoneUri(this, RingtoneManager.TYPE_ALARM)
+    private fun startSound(preferredUri: Uri? = null) {
+        val uri = preferredUri
+            ?: RingtoneManager.getActualDefaultRingtoneUri(this, RingtoneManager.TYPE_ALARM)
             ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
             ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
         try {
@@ -168,6 +184,7 @@ class AlarmRingService : Service() {
 
     override fun onDestroy() {
         stopRinging()
+        scope.cancel()
         super.onDestroy()
     }
 

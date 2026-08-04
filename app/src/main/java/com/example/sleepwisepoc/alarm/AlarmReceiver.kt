@@ -11,8 +11,13 @@ import android.media.RingtoneManager
 import android.os.Build
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import com.example.sleepwisepoc.db.SleepWiseDatabase
 import com.example.sleepwisepoc.service.SessionLog
 import com.example.sleepwisepoc.service.SleepMonitoringService
+import java.time.Instant
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.launch
 
 class AlarmReceiver : BroadcastReceiver() {
 
@@ -34,7 +39,40 @@ class AlarmReceiver : BroadcastReceiver() {
                 SessionLog.log(context, "AlarmReceiver: TICK → service")
                 SleepMonitoringService.triggerTick(context)
             }
-            Intent.ACTION_BOOT_COMPLETED -> Log.d(TAG, "BOOT_COMPLETED — scheduling restoration not implemented yet")
+            Intent.ACTION_BOOT_COMPLETED -> {
+                // Check Room for an active PENDING session that still has time left.
+                // If found, restart SleepMonitoringService so monitoring continues
+                // after a device reboot. The service will call resumeFromDb() (via tick)
+                // or detect the matching window in onStartCommand and restore state.
+                val result = goAsync()
+                GlobalScope.launch(Dispatchers.IO) {
+                    try {
+                        val dao = SleepWiseDatabase.get(context).sessionDao()
+                        val nowMs = System.currentTimeMillis()
+                        val active = dao.getPending()
+                            .filter { entity ->
+                                runCatching {
+                                    Instant.parse(entity.windowEnd).toEpochMilli() > nowMs
+                                }.getOrDefault(false)
+                            }
+                            .maxByOrNull { it.createdAt }
+
+                        if (active != null) {
+                            val startMs = runCatching { Instant.parse(active.windowStart).toEpochMilli() }.getOrNull()
+                            val endMs   = runCatching { Instant.parse(active.windowEnd).toEpochMilli() }.getOrNull()
+                            if (startMs != null && endMs != null) {
+                                Log.d(TAG, "BOOT_COMPLETED: active session id=${active.id} — restarting service")
+                                SessionLog.log(context, "BOOT: found active session id=${active.id}, restarting service")
+                                SleepMonitoringService.resume(context, startMs, endMs)
+                            }
+                        } else {
+                            Log.d(TAG, "BOOT_COMPLETED: no active session in Room — nothing to restore")
+                        }
+                    } finally {
+                        result.finish()
+                    }
+                }
+            }
         }
     }
 

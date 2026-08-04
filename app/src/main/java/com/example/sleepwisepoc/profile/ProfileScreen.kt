@@ -2,8 +2,10 @@ package com.example.sleepwisepoc.profile
 
 import android.content.Intent
 import android.net.Uri
-import android.os.Build
 import android.provider.Settings
+import androidx.compose.runtime.LaunchedEffect
+import com.google.android.gms.wearable.Wearable
+import kotlinx.coroutines.tasks.await
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -53,13 +55,6 @@ import com.example.sleepwisepoc.ThemeStore
 import com.example.sleepwisepoc.ui.theme.LocalSleepColors
 import com.google.firebase.auth.FirebaseAuth
 
-private fun isEmulator(): Boolean =
-    Build.FINGERPRINT.contains("generic", ignoreCase = true) ||
-    Build.MODEL.contains("emulator", ignoreCase = true) ||
-    Build.MODEL.contains("sdk", ignoreCase = true) ||
-    Build.HARDWARE.contains("ranchu", ignoreCase = true) ||
-    Build.HARDWARE.contains("goldfish", ignoreCase = true)
-
 @Composable
 fun ProfileScreen(
     modifier: Modifier = Modifier,
@@ -75,11 +70,17 @@ fun ProfileScreen(
 
     var showHelpDialog by remember { mutableStateOf(false) }
     var showSignOutDialog by remember { mutableStateOf(false) }
+    var showConnectDialog by remember { mutableStateOf(false) }
     var isDark by remember { mutableStateOf(ThemeStore.isDark(context)) }
 
-    val deviceConnected = !isEmulator()
-    val deviceDetail = if (deviceConnected) "Connected" else "Not connected"
-    val deviceColor = if (deviceConnected) c.success else c.textSecondary
+    var isWatchConnected by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        isWatchConnected = try {
+            Wearable.getNodeClient(context).connectedNodes.await().isNotEmpty()
+        } catch (_: Exception) { false }
+    }
+    val deviceDetail = if (isWatchConnected) "Connected" else "Not connected"
+    val deviceColor  = if (isWatchConnected) c.success else c.textSecondary
 
     if (showHelpDialog) {
         AlertDialog(
@@ -123,6 +124,40 @@ fun ProfileScreen(
             dismissButton = {
                 TextButton(onClick = { showSignOutDialog = false }) {
                     Text("Cancel", color = c.textSecondary)
+                }
+            },
+            containerColor = c.surface,
+        )
+    }
+
+    if (showConnectDialog) {
+        AlertDialog(
+            onDismissRequest = { showConnectDialog = false },
+            title = { Text("Connect Galaxy Watch", color = c.textPrimary, fontWeight = FontWeight.SemiBold) },
+            text = { Text("Choose an option to set up your Galaxy Watch.", color = c.textSecondary) },
+            confirmButton = {
+                TextButton(onClick = {
+                    showConnectDialog = false
+                    val intent = context.packageManager
+                        .getLaunchIntentForPackage("com.samsung.android.app.watchmanager")
+                        ?: Intent(Settings.ACTION_BLUETOOTH_SETTINGS)
+                    context.startActivity(intent)
+                }) {
+                    Text("Pair with Galaxy Watch", color = c.primary)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    showConnectDialog = false
+                    val marketUri = Uri.parse("market://details?id=${context.packageName}")
+                    val webUri = Uri.parse("https://play.google.com/store/apps/details?id=${context.packageName}")
+                    try {
+                        context.startActivity(Intent(Intent.ACTION_VIEW, marketUri))
+                    } catch (_: Exception) {
+                        context.startActivity(Intent(Intent.ACTION_VIEW, webUri))
+                    }
+                }) {
+                    Text("Install SleepWise on watch", color = c.textSecondary)
                 }
             },
             containerColor = c.surface,
@@ -193,9 +228,7 @@ fun ProfileScreen(
                 name        = "Galaxy Watch",
                 detail      = deviceDetail,
                 detailColor = deviceColor,
-                onClick     = if (!deviceConnected) ({
-                    context.startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS))
-                }) else null,
+                onClick     = if (!isWatchConnected) ({ showConnectDialog = true }) else null,
             )
         }
 

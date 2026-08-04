@@ -21,4 +21,10 @@ interface SleepSessionDao {
 
     @Query("SELECT * FROM sleep_sessions WHERE id = :id")
     suspend fun getById(id: Long): SleepSessionEntity?
+
+    @Query("SELECT * FROM sleep_sessions WHERE uploadStatus = 'PENDING'")
+    fun pendingFlow(): kotlinx.coroutines.flow.Flow<List<SleepSessionEntity>>
+
+    @Query("UPDATE sleep_sessions SET uploadStatus = 'CANCELLED' WHERE id = :id")
+    suspend fun markCancelled(id: Long)
 }

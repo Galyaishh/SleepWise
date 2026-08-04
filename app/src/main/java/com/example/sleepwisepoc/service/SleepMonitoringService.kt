@@ -117,7 +117,13 @@ class SleepMonitoringService : Service() {
         // Doze-proof backstop TICK (action ACTION_TICK, no extras).
         if (intent?.action == AlarmReceiver.ACTION_TICK) {
             SessionLog.log(this, "onStartCommand TICK (backstop)")
-            scope.launch { runPredictionPass(source = "tick") }
+            scope.launch {
+                // If the service was restarted by the OS with no active context
+                // (e.g. after an OS kill with no START_REDELIVER_INTENT pending),
+                // try to restore session state from Room before running a pass.
+                if (windowEndEpochMs == 0L) resumeFromDb()
+                runPredictionPass(source = "tick")
+            }
             scheduleBackstopTick()
             return START_STICKY
         }
@@ -157,30 +163,53 @@ class SleepMonitoringService : Service() {
                 Build.MODEL.contains("sdk", ignoreCase = true)
         if (isEmulator) healthManager = null  // Samsung Health not present on emulator
 
+        // Check Room for an existing PENDING session with the same window.
+        // This handles two cases:
+        //   1. OS kill + START_REDELIVER_INTENT  — same intent replayed after process death.
+        //   2. BootReceiver restart — device rebooted; AlarmReceiver starts us with DB-sourced epochs.
+        // If found, restore ticks and continue the night seamlessly without losing history.
+        val existingSession = kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
+            dao.getPending().firstOrNull { entity ->
+                runCatching { Instant.parse(entity.windowEnd).toEpochMilli() == endEpoch }.getOrDefault(false)
+            }
+        }
+
         windowStartEpochMs = startEpoch
         windowEndEpochMs = endEpoch
-        lastProcessedEpochEndMs = 0L
         passCount = 0
         alarmFired = false
-        sessionStartedAt = Instant.now()
         sessionWindowStart = LocalDateTime.ofInstant(Instant.ofEpochMilli(startEpoch), ZoneId.systemDefault()).toLocalTime()
         sessionWindowEnd = LocalDateTime.ofInstant(Instant.ofEpochMilli(endEpoch), ZoneId.systemDefault()).toLocalTime()
-        tickHistory.clear()
-        localSessionId = -1L
 
-        // Retry any sessions from previous nights that failed to upload.
-        scope.launch { retryPendingSessions() }
+        if (existingSession != null) {
+            // Resume — restore ticks and watermark from the saved DB row.
+            localSessionId = existingSession.id
+            sessionStartedAt = runCatching { Instant.parse(existingSession.startedAt) }.getOrElse { Instant.now() }
+            tickHistory.clear()
+            tickHistory.addAll(existingSession.stages)
+            lastProcessedEpochEndMs = tickHistory.lastOrNull()
+                ?.let { runCatching { Instant.parse(it.t).toEpochMilli() }.getOrDefault(0L) } ?: 0L
+            SessionLog.log(this, "onStartCommand RESUMED session id=$localSessionId " +
+                "${tickHistory.size} ticks restored, lastEpoch=" +
+                if (lastProcessedEpochEndMs > 0) java.util.Date(lastProcessedEpochEndMs).toString() else "none")
+        } else {
+            // Fresh start — create a new DB row and clear in-memory state.
+            tickHistory.clear()
+            lastProcessedEpochEndMs = 0L
+            localSessionId = -1L
+            sessionStartedAt = Instant.now()
 
-        // Persist a new session row immediately — crash-proof from this point on.
-        scope.launch {
-            localSessionId = dao.insert(
-                SleepSessionEntity(
-                    windowStart = Instant.ofEpochMilli(startEpoch).toString(),
-                    windowEnd   = Instant.ofEpochMilli(endEpoch).toString(),
-                    startedAt   = Instant.now().toString(),
+            scope.launch { retryPendingSessions() }
+            scope.launch {
+                localSessionId = dao.insert(
+                    SleepSessionEntity(
+                        windowStart = Instant.ofEpochMilli(startEpoch).toString(),
+                        windowEnd   = Instant.ofEpochMilli(endEpoch).toString(),
+                        startedAt   = Instant.now().toString(),
+                    )
                 )
-            )
-            SessionLog.log(this@SleepMonitoringService, "Room session row created id=$localSessionId")
+                SessionLog.log(this@SleepMonitoringService, "Room session row created id=$localSessionId")
+            }
         }
 
         SessionLog.log(this, "onStartCommand window resolved: " +
@@ -474,6 +503,45 @@ class SleepMonitoringService : Service() {
         }
     }
 
+    /**
+     * Restore session context from Room when the service restarts with no in-memory state.
+     * Used by the TICK path after an OS kill (no START_REDELIVER_INTENT pending).
+     * Finds the most-recent PENDING session whose window hasn't ended yet.
+     * Also re-arms the fallback alarm, which is wiped on device reboot.
+     */
+    private suspend fun resumeFromDb() {
+        val nowMs = System.currentTimeMillis()
+        val entity = dao.getPending()
+            .filter { runCatching { Instant.parse(it.windowEnd).toEpochMilli() > nowMs }.getOrDefault(false) }
+            .maxByOrNull { it.createdAt }
+            ?: run {
+                SessionLog.log(this, "resumeFromDb: no active session found in Room")
+                return
+            }
+
+        val wStart = runCatching { Instant.parse(entity.windowStart).toEpochMilli() }.getOrNull() ?: return
+        val wEnd   = runCatching { Instant.parse(entity.windowEnd).toEpochMilli() }.getOrNull()   ?: return
+
+        windowStartEpochMs = wStart
+        windowEndEpochMs   = wEnd
+        localSessionId     = entity.id
+        sessionStartedAt   = runCatching { Instant.parse(entity.startedAt) }.getOrElse { Instant.now() }
+        alarmFired         = false
+        tickHistory.clear()
+        tickHistory.addAll(entity.stages)
+        lastProcessedEpochEndMs = tickHistory.lastOrNull()
+            ?.let { runCatching { Instant.parse(it.t).toEpochMilli() }.getOrDefault(0L) }
+            ?: 0L
+
+        // Re-arm the fallback alarm (cleared by reboot or OS kill).
+        if (nowMs < wEnd) AlarmScheduler.scheduleAt(this, wEnd)
+
+        SessionLog.log(this, "resumeFromDb: restored session id=$localSessionId " +
+            "window=${java.util.Date(wStart)}–${java.util.Date(wEnd)} " +
+            "${tickHistory.size} ticks, lastEpoch=" +
+            if (lastProcessedEpochEndMs > 0) java.util.Date(lastProcessedEpochEndMs).toString() else "none")
+    }
+
     private suspend fun retryPendingSessions() {
         val pending = dao.getPending()
         if (pending.isEmpty()) return
@@ -586,6 +654,19 @@ class SleepMonitoringService : Service() {
 
         fun stop(context: Context) {
             context.stopService(Intent(context, SleepMonitoringService::class.java))
+        }
+
+        /** Restart monitoring for an existing session (e.g. from BootReceiver after reboot). */
+        fun resume(context: Context, startEpochMs: Long, endEpochMs: Long) {
+            val intent = Intent(context, SleepMonitoringService::class.java).apply {
+                putExtra(EXTRA_START_EPOCH, startEpochMs)
+                putExtra(EXTRA_END_EPOCH, endEpochMs)
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(intent)
+            } else {
+                context.startService(intent)
+            }
         }
 
         /**

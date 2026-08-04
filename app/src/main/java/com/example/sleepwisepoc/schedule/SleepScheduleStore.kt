@@ -13,7 +13,6 @@ import java.time.LocalTime
 
 private val Context.scheduleDataStore by preferencesDataStore(name = "schedule")
 
-val ALARM_SOUNDS = listOf("Sunrise Chimes", "Forest Morning", "Ocean Waves", "Gentle Bell", "Vibration Only")
 val SNOOZE_OPTIONS = listOf(5, 9, 10, 15)
 
 data class DaySchedule(
