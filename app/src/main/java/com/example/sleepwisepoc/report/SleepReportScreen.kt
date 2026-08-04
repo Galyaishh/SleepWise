@@ -812,10 +812,10 @@ private fun ThisWeekSection(
     val c = LocalSleepColors.current
     val zone = ZoneId.systemDefault()
 
-    // Build Mon–Sun week around the current session date
-    val anchor  = sessionDate ?: LocalDate.now()
-    val monday  = anchor.with(DayOfWeek.MONDAY)
-    val weekDays = (0..6).map { monday.plusDays(it.toLong()) }
+    // Build Sun–Sat week around the current session date (week starts Sunday).
+    val anchor    = sessionDate ?: LocalDate.now()
+    val weekStart = anchor.with(java.time.temporal.TemporalAdjusters.previousOrSame(DayOfWeek.SUNDAY))
+    val weekDays  = (0..6).map { weekStart.plusDays(it.toLong()) }
 
     // Index sessions by their bed date
     val sessionByDate = sessions.associateBy { s ->
