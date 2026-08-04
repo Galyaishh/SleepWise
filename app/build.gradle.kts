@@ -21,6 +21,19 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    // Shared debug keystore (committed to the repo) so every teammate's debug
+    // build is signed with the SAME certificate → one SHA-1 registered in
+    // Firebase covers everyone. Debug keys are not secrets (password "android"),
+    // so committing this is standard practice.
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
