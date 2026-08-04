@@ -27,6 +27,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -182,11 +183,12 @@ class TonightViewModel(application: Application) : AndroidViewModel(application)
             runCatching {
                 val predictions = runRetrospectiveInference(mgr)
                 compareWithSamsungStages(mgr, predictions)
-                // NOTE: uploadRetrospectiveAsGoodRun(mgr, predictions) intentionally
-                // DISABLED — it injected a synthetic session into the backend on
-                // every app open (with a malformed afternoon window → negative
-                // "time in bed"). Real sessions come only from a completed
-                // monitoring run. Keep the retrospective LOGGING for debugging.
+                // Persist the recovered night so the Sleep tab can show it even
+                // when the live monitoring service was killed overnight. Idempotent
+                // (skips a night that's already stored), and derives the window
+                // from the real schedule — so no more malformed / negative
+                // "time in bed" like the old fixed 06:00–07:00 version.
+                uploadRetrospectiveAsGoodRun(mgr, predictions)
             }
         } catch (t: Throwable) {
             Log.w(TAG, "DIAG failed: ${t.message}", t)
@@ -419,30 +421,57 @@ class TonightViewModel(application: Application) : AndroidViewModel(application)
     }
 
     /**
-     * Build a synthetic "good run" session from the retrospective trajectory
-     * and POST it to the backend, so the Sleep tab has a real-looking record
-     * to show. We pick the first stable Light moment within a hypothetical
-     * 06:00–07:00 wake window as the favorable fire time.
+     * Persist the retrospective trajectory to the backend as a real session so
+     * the Sleep tab can display it — the recovery path for nights where the live
+     * monitoring service was killed but the watch still synced HR to Samsung
+     * Health. The wake window comes from the user's actual schedule for the
+     * morning they woke up on, and the favorable fire time is the first stable
+     * Light minute inside that window. Idempotent: a night already stored (same
+     * started_at ±30 min) is skipped, so this is safe to call on every app open.
      */
     private suspend fun uploadRetrospectiveAsGoodRun(
         mgr: SamsungHealthManager,
         predictions: List<TimedPrediction>,
     ) {
         if (predictions.isEmpty()) return
-        val uid = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid
+        val uid = FirebaseAuth.getInstance().currentUser?.uid
         if (uid == null) {
             Log.d(TAG, "UPLOAD: no Firebase user — skipping")
             return
         }
-        // Hypothetical window: 06:00–07:00 today.
         val zone = java.time.ZoneId.systemDefault()
-        val today = LocalDate.now()
-        val winStart = today.atTime(6, 0).atZone(zone).toInstant()
-        val winEnd = today.atTime(7, 0).atZone(zone).toInstant()
-        // First favorable moment = first stable Light in window.
-        val favorable = predictions
-            .firstOrNull { it.stable && it.stage.equals("Light", true) &&
-                    it.timestamp in winStart.toEpochMilli() until winEnd.toEpochMilli() }
+        val startedMs = predictions.first().timestamp
+        val endedMs   = predictions.last().timestamp
+
+        // Idempotency: skip if this night is already stored.
+        val existing = runCatching { ApiClient.api.listSessions(uid) }.getOrDefault(emptyList())
+        val alreadyStored = existing.any { s ->
+            runCatching { Instant.parse(s.started_at).toEpochMilli() }.getOrNull()
+                ?.let { kotlin.math.abs(it - startedMs) < 30 * 60_000L } == true
+        }
+        if (alreadyStored) {
+            Log.d(TAG, "UPLOAD: night starting ${Instant.ofEpochMilli(startedMs)} already stored — skipping")
+            return
+        }
+
+        // Real wake window for the morning we woke up on, from the schedule.
+        val wakeDate = Instant.ofEpochMilli(endedMs).atZone(zone).toLocalDate()
+        val sched = runCatching { store.schedule.first().forDate(wakeDate) }.getOrNull()
+        val winStart: Instant
+        val winEnd: Instant
+        if (sched != null) {
+            winStart = wakeDate.atTime(sched.windowStart).atZone(zone).toInstant()
+            winEnd   = wakeDate.atTime(sched.wakeTime).atZone(zone).toInstant()
+        } else {
+            winEnd   = Instant.ofEpochMilli(endedMs)
+            winStart = winEnd.minusSeconds(30 * 60)
+        }
+
+        // First favorable moment = first stable Light inside the window.
+        val favorable = predictions.firstOrNull {
+            it.stable && it.stage.equals("Light", true) &&
+                    it.timestamp in winStart.toEpochMilli() until winEnd.toEpochMilli()
+        }
         val firedReason: String
         val firedAt: Instant
         if (favorable != null) {
@@ -452,8 +481,7 @@ class TonightViewModel(application: Application) : AndroidViewModel(application)
             firedReason = "fallback"
             firedAt = winEnd
         }
-        // Trim trajectory to the sleep period for the upload.
-        val startedAt = predictions.first().timestamp
+
         val ticks = predictions.map { p ->
             StageTick(
                 t = Instant.ofEpochMilli(p.timestamp).toString(),
@@ -466,8 +494,8 @@ class TonightViewModel(application: Application) : AndroidViewModel(application)
             user_id = uid,
             window_start = winStart.toString(),
             window_end = winEnd.toString(),
-            started_at = Instant.ofEpochMilli(startedAt).toString(),
-            ended_at = firedAt.toString(),
+            started_at = Instant.ofEpochMilli(startedMs).toString(),
+            ended_at = Instant.ofEpochMilli(endedMs).toString(),
             fired_at = firedAt.toString(),
             fired_reason = firedReason,
             stages = ticks,
@@ -476,8 +504,8 @@ class TonightViewModel(application: Application) : AndroidViewModel(application)
             val saved = ApiClient.api.uploadSession(payload)
             Log.d(
                 TAG,
-                "UPLOAD: session id=${saved.id} reason=$firedReason " +
-                        "ticks=${ticks.size} firedAt=${firedAt}"
+                "UPLOAD: recovered night id=${saved.id} reason=$firedReason " +
+                        "ticks=${ticks.size} started=${payload.started_at} firedAt=$firedAt"
             )
         } catch (t: Throwable) {
             Log.w(TAG, "UPLOAD failed: ${t.message}")
