@@ -22,6 +22,10 @@ import com.example.sleepwisepoc.StageTick
 import com.example.sleepwisepoc.TFLiteSleepPredictor
 import com.example.sleepwisepoc.alarm.AlarmScheduler
 import com.example.sleepwisepoc.alarm.AlarmReceiver
+import com.example.sleepwisepoc.db.SleepSessionEntity
+import com.example.sleepwisepoc.db.SleepWiseDatabase
+import com.example.sleepwisepoc.db.toSessionUpload
+import com.google.gson.Gson
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -76,6 +80,9 @@ class SleepMonitoringService : Service() {
 
     private val tickHistory = mutableListOf<StageTick>()
     private var sessionStartedAt: Instant? = null
+    private var localSessionId: Long = -1L
+    private val dao by lazy { SleepWiseDatabase.get(this).sessionDao() }
+    private val gson = Gson()
     private var sessionWindowStart: LocalTime? = null
     private var sessionWindowEnd: LocalTime? = null
 
@@ -159,6 +166,23 @@ class SleepMonitoringService : Service() {
         sessionWindowStart = LocalDateTime.ofInstant(Instant.ofEpochMilli(startEpoch), ZoneId.systemDefault()).toLocalTime()
         sessionWindowEnd = LocalDateTime.ofInstant(Instant.ofEpochMilli(endEpoch), ZoneId.systemDefault()).toLocalTime()
         tickHistory.clear()
+        localSessionId = -1L
+
+        // Retry any sessions from previous nights that failed to upload.
+        scope.launch { retryPendingSessions() }
+
+        // Persist a new session row immediately — crash-proof from this point on.
+        scope.launch {
+            localSessionId = dao.insert(
+                SleepSessionEntity(
+                    windowStart = Instant.ofEpochMilli(startEpoch).toString(),
+                    windowEnd   = Instant.ofEpochMilli(endEpoch).toString(),
+                    startedAt   = Instant.now().toString(),
+                )
+            )
+            SessionLog.log(this@SleepMonitoringService, "Room session row created id=$localSessionId")
+        }
+
         SessionLog.log(this, "onStartCommand window resolved: " +
                 "startEpoch=${java.util.Date(windowStartEpochMs)} endEpoch=${java.util.Date(windowEndEpochMs)} " +
                 "isEmulator=$isEmulator")
@@ -251,6 +275,13 @@ class SleepMonitoringService : Service() {
                         conf = lastPred!!.confidence,
                         stable = lastPred!!.isStable,
                     )
+                    // Snapshot tickHistory to Room after every tick so a crash
+                    // mid-night loses at most the current prediction pass.
+                    val id = localSessionId
+                    if (id > 0L) {
+                        val json = gson.toJson(tickHistory.toList())
+                        scope.launch { dao.updateStages(id, json) }
+                    }
                     // Per-epoch line so backfilled minutes are all visible in the
                     // log (a morning burst can backfill 60+ epochs — the pass
                     // summary alone would hide the whole trajectory).
@@ -436,8 +467,27 @@ class SleepMonitoringService : Service() {
         try {
             val saved = ApiClient.api.uploadSession(payload)
             Log.d(TAG, "session uploaded id=${saved.id} ticks=${tickHistory.size} reason=$firedReason")
+            val id = localSessionId
+            if (id > 0L) dao.markUploaded(id, Instant.now().toString())
         } catch (t: Throwable) {
-            Log.w(TAG, "session upload failed: ${t.message}")
+            Log.w(TAG, "session upload failed: ${t.message} — kept as PENDING in Room for retry")
+        }
+    }
+
+    private suspend fun retryPendingSessions() {
+        val pending = dao.getPending()
+        if (pending.isEmpty()) return
+        SessionLog.log(this, "retryPendingSessions: ${pending.size} PENDING session(s) found")
+        for (entity in pending) {
+            if (entity.id == localSessionId) continue
+            try {
+                ApiClient.api.uploadSession(entity.toSessionUpload())
+                dao.markUploaded(entity.id, entity.endedAt ?: Instant.now().toString())
+                Log.i(TAG, "retry session ${entity.id} — uploaded successfully")
+                SessionLog.log(this, "retry session ${entity.id} — uploaded OK")
+            } catch (t: Throwable) {
+                Log.w(TAG, "retry session ${entity.id} failed: ${t.message}")
+            }
         }
     }
 
