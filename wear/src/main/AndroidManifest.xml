@@ -14,6 +14,13 @@
     <!-- Foreground service so the watch OS keeps our HR loop alive overnight -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_HEALTH" />
+    <!-- Android 14: a health-type foreground service needs FOREGROUND_SERVICE_HEALTH
+         PLUS at least one of these. HIGH_SAMPLING_RATE_SENSORS is a normal
+         (install-time) permission, so it grants automatically and satisfies the rule. -->
+    <uses-permission android:name="android.permission.HIGH_SAMPLING_RATE_SENSORS" />
+    <!-- Android 14: Health Services ExerciseClient needs this granular health
+         permission to deliver HEART_RATE_BPM (also satisfies the FGS-health rule). -->
+    <uses-permission android:name="android.permission.health.READ_HEART_RATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <application

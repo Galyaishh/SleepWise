@@ -36,6 +36,8 @@ android {
 }
 
 dependencies {
+    // Stage 2: Samsung Health Sensor SDK (skin temperature + IBI/HRV). Local .aar.
+    implementation(files("libs/samsung-health-sensor-api-1.4.1.aar"))
     implementation("androidx.core:core-ktx:1.13.1")
     // Wear-OS UI baseline (we keep the UI minimal — just an "active" screen)
     implementation("androidx.wear:wear:1.3.0")

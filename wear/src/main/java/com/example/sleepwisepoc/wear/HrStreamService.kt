@@ -63,6 +63,7 @@ class HrStreamService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var exerciseClient: ExerciseClient? = null
     private var flushJob: Job? = null
+    private var samsung: SamsungSensorTracker? = null   // Stage 2: live temp + IBI/HRV
     private val pendingSamples = mutableListOf<Pair<Long, Float>>()
     private val pendingLock = Any()
     @Volatile private var exerciseActive = false
@@ -221,13 +222,23 @@ class HrStreamService : Service() {
         // Accelerometer streams independently of ExerciseClient — same listener
         // pattern, just plain Android SensorManager.
         startAccelStreaming()
-        // Periodic flush loop — push buffered HR and accel to the phone every 5s.
+        // Stage 2: live skin temperature + IBI (HRV) via Samsung Health Sensor SDK.
+        // Best-effort — must NEVER break HR/accel streaming or crash the service if
+        // the SDK / developer-mode isn't available, so wrap the whole init.
+        samsung = try {
+            SamsungSensorTracker(this).also { it.start() }
+        } catch (t: Throwable) {
+            Log.w(TAG, "Samsung sensors unavailable (temp/HRV disabled): ${t.message}")
+            null
+        }
+        // Periodic flush loop — push buffered HR, accel, temp and IBI to the phone every 5s.
         flushJob?.cancel()
         flushJob = scope.launch {
             while (isActive) {
                 delay(BATCH_INTERVAL_MS)
                 flushBatch()
                 flushAccelBatch()
+                flushSamsung()
             }
         }
     }
@@ -265,6 +276,14 @@ class HrStreamService : Service() {
         scope.launch {
             sendBatchToPhone(WearProtocol.PATH_ACCEL_BATCH, batch, "ACCEL")
         }
+    }
+
+    private fun flushSamsung() {
+        val s = samsung ?: return
+        val temp = s.drainTemp()
+        val ibi = s.drainIbi()
+        if (temp.isNotEmpty()) scope.launch { sendBatchToPhone(WearProtocol.PATH_TEMP_BATCH, temp, "TEMP") }
+        if (ibi.isNotEmpty()) scope.launch { sendBatchToPhone(WearProtocol.PATH_IBI_BATCH, ibi, "IBI") }
     }
 
     /** Shared batch-send helper used by both HR and accel flush paths. */
@@ -305,10 +324,19 @@ class HrStreamService : Service() {
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            startForeground(NOTIF_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH)
-        } else {
-            startForeground(NOTIF_ID, notification)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                startForeground(NOTIF_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH)
+            } else {
+                startForeground(NOTIF_ID, notification)
+            }
+        } catch (t: Throwable) {
+            // Android 12+ forbids starting a foreground service from the background.
+            // If the phone's /cmd/start arrived while the watch app was backgrounded
+            // this throws — don't crash, stop cleanly. The reliable start is opening
+            // the SleepWise app on the watch (foreground), which starts this service.
+            Log.w(TAG, "startForeground denied (background start) — stopping: ${t.message}")
+            stopSelf()
         }
     }
 
@@ -325,6 +353,8 @@ class HrStreamService : Service() {
         }
         flushBatch()
         flushAccelBatch()
+        flushSamsung()
+        samsung?.stop(); samsung = null
         scope.cancel()
         super.onDestroy()
     }

@@ -16,6 +16,10 @@ object WearProtocol {
     // Accelerometer magnitude samples (m/s² with gravity removed). Same
     // "ts,value;ts,value;..." encoding as HR — phone-side decoders reuse decodeBatch.
     const val PATH_ACCEL_BATCH = "/sleepwise/accel"
+    // Stage 2 (Samsung Health Sensor SDK): live skin temperature (°C) and
+    // inter-beat intervals (ms). Same "ts,value;..." encoding — reuse decodeBatch.
+    const val PATH_TEMP_BATCH = "/sleepwise/temp"
+    const val PATH_IBI_BATCH = "/sleepwise/ibi"
 
     fun encodeBatch(samples: List<Pair<Long, Float>>): ByteArray =
         samples.joinToString(";") { "${it.first},${it.second}" }.toByteArray(Charsets.UTF_8)

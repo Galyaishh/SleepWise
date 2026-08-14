@@ -18,12 +18,20 @@ class PhoneCommandListener : WearableListenerService() {
         Log.d(TAG, "onMessageReceived path=${event.path}")
         when (event.path) {
             WearProtocol.PATH_CMD_START -> {
-                val intent = Intent(this, HrStreamService::class.java)
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    startForegroundService(intent)
-                } else {
-                    startService(intent)
-                }
+                // Bring the watch app to the foreground so it can legally start the
+                // foreground service (Android 12+ blocks background FGS starts).
+                // MainActivity.onResume() then starts streaming.
+                runCatching {
+                    startActivity(
+                        Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    )
+                }.onFailure { Log.w(TAG, "could not launch watch activity: ${it.message}") }
+                // Best-effort direct start too (works if the app is already foreground).
+                runCatching {
+                    val intent = Intent(this, HrStreamService::class.java)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent)
+                    else startService(intent)
+                }.onFailure { Log.w(TAG, "cmd/start FGS denied (app backgrounded): ${it.message}") }
             }
             WearProtocol.PATH_CMD_STOP -> {
                 stopService(Intent(this, HrStreamService::class.java))

@@ -10,6 +10,9 @@ object WearProtocol {
     const val PATH_CMD_STOP = "/sleepwise/cmd/stop"
     const val PATH_HR_BATCH = "/sleepwise/hr"
     const val PATH_ACCEL_BATCH = "/sleepwise/accel"
+    // Stage 2: live skin temperature (°C) + inter-beat intervals (ms).
+    const val PATH_TEMP_BATCH = "/sleepwise/temp"
+    const val PATH_IBI_BATCH = "/sleepwise/ibi"
 
     fun encodeBatch(samples: List<Pair<Long, Float>>): ByteArray =
         samples.joinToString(";") { "${it.first},${it.second}" }.toByteArray(Charsets.UTF_8)
