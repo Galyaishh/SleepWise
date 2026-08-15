@@ -45,12 +45,14 @@ class WearMessageListener : WearableListenerService() {
             WearProtocol.PATH_TEMP_BATCH -> {
                 val s = WearProtocol.decodeBatch(event.data)
                 if (s.isEmpty()) return
+                WearTempSource.appendBatch(s)
                 val avg = s.map { it.second }.average()
                 SessionLog.log(this, "WEAR_TEMP_BATCH received=${s.size} avgSkinTemp=${"%.2f".format(avg)}C")
             }
             WearProtocol.PATH_IBI_BATCH -> {
                 val s = WearProtocol.decodeBatch(event.data)
                 if (s.isEmpty()) return
+                WearHrvSource.appendBatch(s)
                 val avg = s.map { it.second }.average()
                 val bpm = if (avg > 0) 60000.0 / avg else 0.0
                 SessionLog.log(this, "WEAR_IBI_BATCH received=${s.size} avgIBI=${"%.0f".format(avg)}ms (~${"%.0f".format(bpm)}bpm)")

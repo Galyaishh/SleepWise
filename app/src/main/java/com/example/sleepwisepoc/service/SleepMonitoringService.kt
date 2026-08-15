@@ -16,6 +16,8 @@ import com.example.sleepwisepoc.SamsungHealthManager
 import com.example.sleepwisepoc.wear.WearAccelSource
 import com.example.sleepwisepoc.wear.WearCommand
 import com.example.sleepwisepoc.wear.WearHrSource
+import com.example.sleepwisepoc.wear.WearHrvSource
+import com.example.sleepwisepoc.wear.WearTempSource
 import com.google.firebase.auth.FirebaseAuth
 import com.example.sleepwisepoc.SessionUpload
 import com.example.sleepwisepoc.StageTick
@@ -413,7 +415,7 @@ class SleepMonitoringService : Service() {
                     RealEpoch(
                         startTimeMs = epochStart,
                         endTimeMs = epochEnd,
-                        features = featuresFromWearSamples(epochSamples, accStd, accMoveRatio),
+                        features = featuresFromWearSamples(epochSamples, accStd, accMoveRatio, epochStart, epochEnd),
                         hrSampleCount = epochSamples.size,
                     )
                 )
@@ -442,16 +444,21 @@ class SleepMonitoringService : Service() {
     // ─── Epoch feature computation ────────────────────────────────────────────
 
     /**
-     * Build the 12 epoch features (9 HR stats + 3 temp stats) directly from a
-     * list of live HR samples received from the wear companion. Skin temp isn't
-     * available in real time from Wear OS Health Services, so we use the same
-     * 34 °C constant fallback as SamsungHealthManager.processDataIntoEpochs.
+     * Build the epoch features from live wear samples. HR stats come from the
+     * companion's HR stream; accel from WearAccelSource. Skin temperature and HRV
+     * are now streamed live (Samsung Health Sensor SDK) — when present for the
+     * epoch window we attach real temp + time-domain HRV (masks=1); when a stream
+     * is silent we leave them null (masks=0) and the model ignores them.
      */
     private fun featuresFromWearSamples(
         samples: List<SamsungHealthManager.HeartRateSample>,
         accStd: Float = 0f,
         accMoveRatio: Float = 0f,
+        epochStartMs: Long = 0L,
+        epochEndMs: Long = 0L,
     ): TFLiteSleepPredictor.EpochFeatures {
+        val temp = if (epochEndMs > 0) WearTempSource.tempFeaturesForWindow(epochStartMs, epochEndMs) else null
+        val hrv = if (epochEndMs > 0) WearHrvSource.hrvFeaturesForWindow(epochStartMs, epochEndMs) else null
         val bpm = samples.map { it.bpm.toFloat() }.sorted()
         val n = bpm.size
         val mean = bpm.average().toFloat()
@@ -481,9 +488,15 @@ class SleepMonitoringService : Service() {
             hrMedian = median,
             hrIqr = iqr,
             hrSkew = skew,
-            tempMean = 34.0f,       // skin temp not available in real time
-            tempStd = 0.0f,
-            tempTrend = 0.0f,
+            // real skin temp (masks=1) when the E4/Samsung temp stream covered this epoch
+            tempMean = temp?.first,
+            tempStd = temp?.second,
+            tempTrend = temp?.third,
+            // real time-domain HRV (masks=1) when the IBI stream covered this epoch
+            hrvRmssd = hrv?.get(0),
+            hrvSdnn = hrv?.get(1),
+            hrvPnn50 = hrv?.get(2),
+            hrvIbiMean = hrv?.get(3),
             accStd = accStd,
             accMoveRatio = accMoveRatio,
         )

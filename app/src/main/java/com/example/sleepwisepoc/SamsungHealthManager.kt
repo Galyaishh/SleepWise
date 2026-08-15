@@ -767,9 +767,9 @@ class SamsungHealthManager(private val context: Context) {
             hrMedian = epoch.hrMedian,
             hrIqr = epoch.hrIqr,
             hrSkew = epoch.hrSkew,
-            tempMean = epoch.tempMean,
-            tempStd = epoch.tempStd,
-            tempTrend = epoch.tempTrend
+            // Samsung Health fallback has no real-time skin temp / HRV, so leave
+            // temp+HRV null (masks=0) — the model runs HR+accel only here rather
+            // than being fed a constant temperature as if it were real.
         )
     }
 }
