@@ -7,46 +7,33 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.ChevronRight
-import androidx.compose.material.icons.outlined.Info
-import androidx.compose.material.icons.rounded.ChevronLeft
-import androidx.compose.material.icons.rounded.ChevronRight
-import androidx.compose.material.icons.rounded.Refresh
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -56,30 +43,27 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.sleepwisepoc.SessionRecord
 import com.example.sleepwisepoc.StageTick
 import com.example.sleepwisepoc.WeeklyReport
-import com.example.sleepwisepoc.ui.theme.LocalSleepColors
-import kotlinx.coroutines.launch
+import com.example.sleepwisepoc.ui.theme.*
 import java.time.DayOfWeek
 import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.time.temporal.ChronoUnit
+import java.time.temporal.TemporalAdjusters
+import java.util.Locale
 import kotlin.math.roundToInt
 
 // ─── Formatters ───────────────────────────────────────────────────────────────
 
-private val DateHeaderFmt = DateTimeFormatter.ofPattern("EEE, MMM d")
-private val DayNameFmt    = DateTimeFormatter.ofPattern("EEE")
+private val AxisFmt      = DateTimeFormatter.ofPattern("HH:mm")   // 23:12 · 01:00
+private val ClockFmt     = DateTimeFormatter.ofPattern("H:mm")    // 6:42
+private val DayShortFmt  = DateTimeFormatter.ofPattern("EEE d")   // Wed 12
+private val DateLongFmt  = DateTimeFormatter.ofPattern("EEE d MMM") // Thu 13 Aug
+private val WeekEndFmt    = DateTimeFormatter.ofPattern("d MMM")
 private val DayNumFmt     = DateTimeFormatter.ofPattern("d")
-private val TimeFmt12     = DateTimeFormatter.ofPattern("h:mm a")
-private val ShortTimeFmt  = DateTimeFormatter.ofPattern("h:mm")
-
-// ─── Stage colors ─────────────────────────────────────────────────────────────
-
-private val StageColorAwake = Color(0xFFE8B06A)
-private val StageColorREM   = Color(0xFFB09ADE)
-private val StageColorLight = Color(0xFF68BDE0)
-private val StageColorDeep  = Color(0xFF7B8FE8)
+private val WeekDayAbbrev = DateTimeFormatter.ofPattern("EEE")
 
 // ─── Domain models ────────────────────────────────────────────────────────────
 
@@ -93,22 +77,32 @@ private data class StageDurations(
     val sleepingMins get() = remMins + lightMins + deepMins
 }
 
+private enum class InsightTone { GOOD, DEEP, REM, AWAKE }
+
 private data class Insight(
-    val emoji: String,
-    val color: Color,
+    val tone: InsightTone,
     val title: String,
     val subtitle: String,
 )
 
-private data class WeekCard(
-    val dayName: String,
-    val dayNum: String,
-    val durationMins: Long,
-    val stageFracs: Map<String, Float>,
-    val isCurrent: Boolean,
-    val hasData: Boolean,
-    val score: Int = 0,
+/** Merged hypnogram data mapped into the Night Ribbon's model. */
+private data class RibbonData(
+    val segments: List<HypSegment>,
+    val totalMin: Int,
+    val originMs: Long,
+    val windowStartMin: Int?,
+    val windowEndMin: Int?,
+    val wakeMarkerMin: Int?,
 )
+
+// ─── Stage mapping ────────────────────────────────────────────────────────────
+
+private fun String.toSleepStage(): SleepStage = when (trim().lowercase()) {
+    "deep"          -> SleepStage.DEEP
+    "rem"           -> SleepStage.REM
+    "wake", "awake" -> SleepStage.AWAKE
+    else            -> SleepStage.LIGHT
+}
 
 // ─── Domain helpers ───────────────────────────────────────────────────────────
 
@@ -134,53 +128,79 @@ private fun computeStageDurations(ticks: List<StageTick>): StageDurations {
     return StageDurations(awake, rem, light, deep)
 }
 
-private fun stageFracsOf(d: StageDurations): Map<String, Float> {
-    val t = d.totalMins.toFloat().coerceAtLeast(1f)
-    return mapOf(
-        "awake" to d.awakeMins / t,
-        "rem"   to d.remMins   / t,
-        "light" to d.lightMins / t,
-        "deep"  to d.deepMins  / t,
-    )
-}
-
 private fun formatDuration(mins: Long): String {
     val h = mins / 60; val m = mins % 60
     return if (h > 0) "${h}h ${m}m" else "${m}m"
 }
 
-
 /**
- * 0–100 sleep quality score.
- *
- * Component weights:
- *   Total sleep duration  – up to 30 pts  (7–9h ideal)
- *   Deep sleep %          – up to 25 pts  (≥20% ideal)
- *   REM sleep %           – up to 20 pts  (≥20% ideal)
- *   Wake bouts            – up to 15 pts  (0 bouts ideal)
- *   Smart-wake outcome    – up to 10 pts  (favorable)
+ * Merge the session's StageTicks into the Night Ribbon's [HypSegment] model —
+ * consecutive same-stage ticks collapse into one band. Minutes are measured from
+ * the first tick (the ribbon origin); the smart-wake window and the fired-at
+ * marker are expressed in the same origin-relative minute basis.
  */
-private fun computeSleepScore(
-    d: StageDurations,
-    wakeBouts: Int,
-    firedReason: String?,
-): Int {
+private fun buildRibbon(session: SessionRecord): RibbonData {
+    val ticks = session.stages
+    val instants = ticks.map { runCatching { Instant.parse(it.t) }.getOrNull() }
+    val valid = instants.filterNotNull()
+    if (valid.size < 2) return RibbonData(emptyList(), 1, 0L, null, null, null)
+
+    val originMs = valid.first().toEpochMilli()
+    val avgMs = (valid.last().toEpochMilli() - originMs) / (valid.size - 1).toLong()
+    val endMs = valid.last().toEpochMilli() + avgMs
+    val totalMin = ((endMs - originMs) / 60_000L).toInt().coerceAtLeast(1)
+
+    fun relMin(ms: Long) = ((ms - originMs) / 60_000L).toInt()
+
+    // Raw per-tick spans → [stage, startMin, endMin]
+    data class Raw(val stage: SleepStage, val start: Int, val end: Int)
+    val raw = ticks.mapIndexedNotNull { i, tick ->
+        val t0 = instants[i] ?: return@mapIndexedNotNull null
+        val t1 = instants.getOrNull(i + 1)?.toEpochMilli() ?: endMs
+        Raw(tick.stage.toSleepStage(), relMin(t0.toEpochMilli()), relMin(t1))
+    }
+
+    // Merge consecutive same-stage runs
+    val segs = mutableListOf<HypSegment>()
+    var k = 0
+    while (k < raw.size) {
+        val s = raw[k]
+        var j = k + 1
+        while (j < raw.size && raw[j].stage == s.stage) j++
+        val startMin = s.start
+        val endMin   = raw[j - 1].end
+        segs.add(HypSegment(startMin, (endMin - startMin).coerceAtLeast(1), s.stage))
+        k = j
+    }
+
+    fun isoRel(iso: String?): Int? = iso
+        ?.let { runCatching { Instant.parse(it) }.getOrNull() }
+        ?.let { relMin(it.toEpochMilli()) }
+
+    return RibbonData(
+        segments       = segs,
+        totalMin       = totalMin,
+        originMs       = originMs,
+        windowStartMin = isoRel(session.window_start),
+        windowEndMin   = isoRel(session.window_end),
+        wakeMarkerMin  = isoRel(session.fired_at),
+    )
+}
+
+private fun computeSleepScore(d: StageDurations, wakeBouts: Int, firedReason: String?): Int {
     val sleepMins = d.sleepingMins.coerceAtLeast(1L)
     val total     = d.totalMins.toFloat().coerceAtLeast(1f)
     val deepPct   = d.deepMins / total
     val remPct    = d.remMins  / total
 
-    // Duration (30 pts)
     val durPts = when {
-        sleepMins >= 420 && sleepMins <= 540 -> 30  // 7–9h
-        sleepMins >= 360 && sleepMins < 420  -> 22  // 6–7h
-        sleepMins >= 540 && sleepMins <= 600 -> 22  // 9–10h (slightly long)
-        sleepMins >= 300 && sleepMins < 360  -> 12  // 5–6h
-        sleepMins > 600                      -> 12  // >10h
-        else                                 -> 4   // <5h
+        sleepMins in 420..540 -> 30
+        sleepMins in 360..419 -> 22
+        sleepMins in 541..600 -> 22
+        sleepMins in 300..359 -> 12
+        sleepMins > 600       -> 12
+        else                  -> 4
     }
-
-    // Deep sleep (25 pts) — stricter bands so a full award is genuinely earned
     val deepPts = when {
         deepPct >= 0.22f -> 25
         deepPct >= 0.17f -> 18
@@ -188,16 +208,12 @@ private fun computeSleepScore(
         deepPct >= 0.07f -> 4
         else             -> 2
     }
-
-    // REM sleep (20 pts)
     val remPts = when {
         remPct >= 0.22f -> 20
         remPct >= 0.17f -> 14
         remPct >= 0.11f -> 7
         else            -> 2
     }
-
-    // Wake bouts (15 pts)
     val wakePts = when {
         wakeBouts == 0 -> 15
         wakeBouts <= 1 -> 11
@@ -205,30 +221,14 @@ private fun computeSleepScore(
         wakeBouts <= 4 -> 3
         else           -> 0
     }
-
-    // Smart-wake outcome (10 pts)
     val alarmPts = if (firedReason == "favorable") 10 else 0
 
-    // A binary session (on-device model emits only Light/Deep) has no REM or
-    // Awake data, so REM's 20 pts and the Wake component are not meaningfully
-    // measurable. Renormalize over the components that DO apply
-    // (Duration 30 + Deep 25 + Alarm 10 = 65) so a real tracked night isn't
-    // structurally capped ~18 pts below the 4-class demo nights.
-    // Cap at 98: a perfect 100 reads as fake — even an excellent night tops out
-    // just short, so the score stays believable.
     val isBinary = d.remMins == 0L && d.awakeMins == 0L
     return if (isBinary) {
         ((durPts + deepPts + alarmPts) * 100f / 65f).toInt().coerceIn(0, 98)
     } else {
         (durPts + deepPts + remPts + wakePts + alarmPts).coerceIn(0, 98)
     }
-}
-
-private fun scoreColor(score: Int): Color = when {
-    score >= 85 -> Color(0xFF4CAF82)   // green
-    score >= 70 -> Color(0xFF68BDE0)   // teal/blue
-    score >= 50 -> Color(0xFFE8B06A)   // amber
-    else        -> Color(0xFFE06868)   // red
 }
 
 private fun countWakeBouts(ticks: List<StageTick>): Int {
@@ -241,55 +241,62 @@ private fun countWakeBouts(ticks: List<StageTick>): Int {
     return count
 }
 
-private fun generateInsights(
-    d: StageDurations,
-    firedReason: String?,
-    wakeBouts: Int,
-): List<Insight> {
-    val list    = mutableListOf<Insight>()
-    val t       = d.totalMins.toFloat().coerceAtLeast(1f)
+private fun verdictFor(score: Int): Pair<String, String> = when {
+    score >= 85 -> "A steady night." to
+        "You spent almost all of it asleep and woke up clear."
+    score >= 70 -> "A solid night." to
+        "A good night overall, with a little room for more rest."
+    score >= 50 -> "A lighter night." to
+        "You slept, but it broke up more than usual."
+    else -> "A restless night." to
+        "Sleep came in short stretches. Tonight is a fresh start."
+}
+
+private fun generateInsights(d: StageDurations, firedReason: String?, wakeBouts: Int): List<Insight> {
+    val list = mutableListOf<Insight>()
+    val t = d.totalMins.toFloat().coerceAtLeast(1f)
     val deepPct = d.deepMins / t
     val remPct  = d.remMins  / t
-    // Binary on-device model has no REM/Awake — don't emit REM insights for it
-    // (would always say "REM was shorter than usual").
     val isBinary = d.remMins == 0L && d.awakeMins == 0L
 
     when (firedReason) {
-        "favorable" -> list += Insight("✨", Color(0xFFFFD166),
-            "You woke during optimal light sleep.",
-            "This helps you feel more refreshed.")
-        "fallback"  -> list += Insight("⏰", StageColorAwake,
-            "Alarm fired at the end of your window.",
-            "No light sleep moment was detected in time.")
+        "favorable" -> list += Insight(
+            InsightTone.GOOD,
+            "You woke during light sleep",
+            "That is the easy exit — the first hour of your morning tends to feel clearer.")
+        "fallback"  -> list += Insight(
+            InsightTone.AWAKE,
+            "We woke you at the end of the window",
+            "No light-sleep moment showed up in time, so we rang right on schedule.")
+    }
+    when {
+        deepPct >= 0.20f -> list += Insight(
+            InsightTone.DEEP,
+            "Deep sleep landed early",
+            "${formatDuration(d.deepMins)} of deep sleep, most of it in the first half — the pattern of a good recovery night.")
+        deepPct < 0.10f -> list += Insight(
+            InsightTone.DEEP,
+            "Deep sleep ran a little short",
+            "An earlier, steadier bedtime tonight usually brings it back.")
     }
     if (!isBinary) when {
-        remPct >= 0.22f -> list += Insight("🧠", StageColorREM,
-            "REM sleep was strong last night.",
-            "Memory and mood restoration was active.")
-        remPct < 0.12f  -> list += Insight("🧠", StageColorREM,
-            "REM sleep was shorter than usual.",
-            "Consistent sleep timing helps improve this.")
-    }
-    when {
-        deepPct >= 0.20f -> list += Insight("💪", StageColorDeep,
-            "Deep sleep supported physical recovery.",
-            "Your body got solid restoration overnight.")
-        deepPct < 0.10f  -> list += Insight("🛌", StageColorDeep,
-            "Deep sleep was lower than ideal.",
-            "Try an earlier, consistent bedtime tonight.")
-    }
-    when {
-        wakeBouts == 0 -> list += Insight("🌙", Color(0xFF4ADE80),
-            "Your heart rate stayed calm and stable.",
-            "A sign of good recovery.")
-        wakeBouts >= 4 -> list += Insight("🌙", StageColorAwake,
-            "You stirred ${wakeBouts} times during the night.",
-            "A calmer sleep environment may help.")
+        remPct >= 0.22f -> list += Insight(
+            InsightTone.REM,
+            "Plenty of dreaming sleep",
+            "Strong REM supports memory and mood — a good sign.")
+        wakeBouts in 1..3 -> list += Insight(
+            InsightTone.AWAKE,
+            "One restless stretch",
+            "A few minutes awake, then straight back down. Nothing to worry about.")
+        wakeBouts >= 4 -> list += Insight(
+            InsightTone.AWAKE,
+            "You stirred a few times",
+            "A calmer, darker room can help the night hold together.")
     }
     return list.take(3)
 }
 
-// ─── Entry point ──────────────────────────────────────────────────────────────
+// ─── Entry point (signature preserved for MainActivity) ─────────────────────────
 
 @Composable
 fun SleepReportScreen(
@@ -300,720 +307,563 @@ fun SleepReportScreen(
     val state by viewModel.state.collectAsState()
     Box(modifier = modifier.fillMaxSize().background(c.bg)) {
         when (val s = state) {
-            ReportUiState.Loading        -> LoadingView()
-            is ReportUiState.Empty       -> EmptyView()
-            is ReportUiState.Error       -> EmptyView()
-            is ReportUiState.Loaded      -> NightPager(
-                report     = s.report,
-                isDemoData = s.isDemoData,
-                onRefresh  = viewModel::refresh,
-            )
+            ReportUiState.Loading   -> MessageView("Loading your nights.")
+            is ReportUiState.Empty  -> MessageView("No nights recorded yet.")
+            is ReportUiState.Error  -> MessageView("No nights recorded yet.")
+            is ReportUiState.Loaded -> NightPager(report = s.report, onRefresh = viewModel::refresh)
         }
     }
 }
 
-// ─── Night pager ──────────────────────────────────────────────────────────────
+// ─── Night pager — header + navigation between nights ──────────────────────────
 
 @Composable
-private fun NightPager(report: WeeklyReport, isDemoData: Boolean, onRefresh: () -> Unit) {
+private fun NightPager(report: WeeklyReport, onRefresh: () -> Unit) {
     val zone = ZoneId.systemDefault()
     val c = LocalSleepColors.current
     val sessions = report.sessions
-    if (sessions.isEmpty()) { EmptyView(); return }
+    if (sessions.isEmpty()) { MessageView("No nights recorded yet."); return }
 
-    // Map each session to the calendar date you WOKE UP on (ended_at local date),
-    // so a night is filed under its morning.
+    // File each session under the calendar date you WOKE UP on.
     val byDate = remember(sessions) {
         sessions.mapNotNull { s ->
             runCatching { Instant.parse(s.ended_at).atZone(zone).toLocalDate() }.getOrNull()?.let { it to s }
         }.toMap()
     }
-    // Day slots: today back to the oldest recorded night, so gaps AND empty days
-    // (incl. today before tonight's run) are navigable.
-    val today  = java.time.LocalDate.now(zone)
+    val today  = LocalDate.now(zone)
     val oldest = byDate.keys.minOrNull() ?: today
     val days = remember(byDate) {
-        val span = java.time.temporal.ChronoUnit.DAYS.between(oldest, today).toInt().coerceAtLeast(0)
+        val span = ChronoUnit.DAYS.between(oldest, today).toInt().coerceAtLeast(0)
         (0..span).map { today.minusDays(it.toLong()) }   // index 0 = today (newest)
     }
-    // Open on the most recent day that actually has data.
-    var currentPage by remember(days) {
-        mutableStateOf(days.indexOfFirst { byDate.containsKey(it) }.coerceAtLeast(0))
+    val newestDataIdx = remember(days) { days.indexOfFirst { byDate.containsKey(it) }.coerceAtLeast(0) }
+    var currentPage by remember(days) { mutableStateOf(newestDataIdx) }
+
+    val day     = days[currentPage]
+    val session = byDate[day]
+
+    // Header eyebrow + date line.
+    val bedInstant  = session?.let { runCatching { Instant.parse(it.started_at) }.getOrNull() }
+    val wakeInstant = session?.let { runCatching { Instant.parse(it.ended_at) }.getOrNull() }
+    val bedDate  = bedInstant?.atZone(zone)?.toLocalDate() ?: day.minusDays(1)
+    val wakeDate = wakeInstant?.atZone(zone)?.toLocalDate() ?: day
+
+    val eyebrow = if (session != null && currentPage == newestDataIdx) "LAST NIGHT"
+    else bedDate.dayOfWeek.getDisplayName(java.time.format.TextStyle.FULL, Locale.getDefault())
+        .uppercase(Locale.getDefault()) + " NIGHT"
+    val dateLine = if (session != null)
+        "${bedDate.format(DayShortFmt)} — ${wakeDate.format(DateLongFmt)}"
+    else day.format(DateLongFmt)
+
+    fun navigateTo(date: LocalDate) {
+        val idx = days.indexOf(date)
+        if (idx >= 0) currentPage = idx
+    }
+    fun jumpWeek(dir: Int) {
+        // dir: +1 = older, -1 = newer. Step a whole week, clamped.
+        currentPage = (currentPage + dir * 7).coerceIn(0, days.lastIndex)
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        Spacer(Modifier.height(8.dp))
-        Row(
-            modifier          = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            // ◁ older
-            IconButton(
-                onClick = { if (currentPage < days.lastIndex) currentPage++ },
-                enabled = currentPage < days.lastIndex,
-            ) {
-                Icon(
-                    Icons.Rounded.ChevronLeft, null,
-                    tint = if (currentPage < days.lastIndex) c.textPrimary else c.textSecondary.copy(0.3f),
-                )
-            }
+        ReportHeader(
+            eyebrow    = eyebrow,
+            dateLine   = dateLine,
+            canOlder   = currentPage < days.lastIndex,
+            canNewer   = currentPage > 0,
+            onOlder    = { if (currentPage < days.lastIndex) currentPage++ },
+            onNewer    = { if (currentPage > 0) currentPage-- },
+        )
 
-            val day     = days[currentPage]
-            val dateStr = if (day == today) "Today" else day.format(DateHeaderFmt)
-            Text(
-                dateStr,
-                modifier   = Modifier.weight(1f),
-                textAlign  = TextAlign.Center,
-                fontSize   = 17.sp,
-                fontWeight = FontWeight.SemiBold,
-                color      = c.textPrimary,
-            )
-
-            // ▷ newer
-            IconButton(
-                onClick = { if (currentPage > 0) currentPage-- },
-                enabled = currentPage > 0,
-            ) {
-                Icon(
-                    Icons.Rounded.ChevronRight, null,
-                    tint = if (currentPage > 0) c.textPrimary else c.textSecondary.copy(0.3f),
-                )
-            }
-
-            IconButton(onClick = onRefresh) {
-                Icon(Icons.Rounded.Refresh, null, tint = c.textSecondary)
-            }
-        }
-
-        // Page content: the day's night, or an empty state if nothing was tracked.
-        val session = byDate[days[currentPage]]
-        if (session != null) {
-            NightPage(session = session, sessions = sessions, modifier = Modifier.weight(1f))
-        } else {
-            EmptyDay(modifier = Modifier.weight(1f))
-        }
-    }
-}
-
-@Composable
-private fun EmptyDay(modifier: Modifier = Modifier) {
-    val c = LocalSleepColors.current
-    Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(
-            modifier            = Modifier.padding(40.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()),
         ) {
-            Text("😴", fontSize = 48.sp)
-            Spacer(Modifier.height(16.dp))
-            Text("No sleep tracked", fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = c.textPrimary)
-            Spacer(Modifier.height(8.dp))
-            Text(
-                "Nothing recorded for this night.",
-                fontSize = 13.sp, color = c.textSecondary, textAlign = TextAlign.Center,
-            )
-        }
-    }
-}
-
-// ─── Single night page ────────────────────────────────────────────────────────
-
-@Composable
-private fun NightPage(
-    session: SessionRecord,
-    sessions: List<SessionRecord>,
-    modifier: Modifier = Modifier,
-) {
-    val zone        = ZoneId.systemDefault()
-    val durations   = remember(session.id) { computeStageDurations(session.stages) }
-    val wakeBouts   = remember(session.id) { countWakeBouts(session.stages) }
-    val score       = remember(session.id) { computeSleepScore(durations, wakeBouts, session.fired_reason) }
-    val insights    = remember(session.id) { generateInsights(durations, session.fired_reason, wakeBouts) }
-
-    val bedInstant  = runCatching { Instant.parse(session.started_at) }.getOrNull()
-    val wakeInstant = runCatching { Instant.parse(session.ended_at)   }.getOrNull()
-    val winStart    = runCatching { Instant.parse(session.window_start) }.getOrNull()
-    val winEnd      = runCatching { Instant.parse(session.window_end)   }.getOrNull()
-
-    val bedText     = bedInstant?.atZone(zone)?.format(TimeFmt12)      ?: "—"
-    val wakeText    = wakeInstant?.atZone(zone)?.format(TimeFmt12)     ?: "—"
-    val winStartStr = winStart?.atZone(zone)?.format(ShortTimeFmt)     ?: "—"
-    val winEndStr   = winEnd?.atZone(zone)?.format(TimeFmt12)          ?: "—"
-
-    val timeInBedMins = if (bedInstant != null && wakeInstant != null)
-        // Clamp: never render negative time-in-bed (a malformed session whose
-        // started_at is after ended_at would otherwise show "minus minutes").
-        Duration.between(bedInstant, wakeInstant).toMinutes().coerceAtLeast(0)
-    else durations.totalMins
-
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState()),
-    ) {
-        // ── Hero ───────────────────────────────────────────────────────────────
-        HeroSection(
-            timeInBedMins = timeInBedMins,
-            // Total sleep can never exceed time in bed (guards gappy/backfilled epochs).
-            sleepMins     = minOf(durations.sleepingMins, timeInBedMins),
-            bedText       = bedText,
-            wakeText      = wakeText,
-            winStartStr   = winStartStr,
-            winEndStr     = winEndStr,
-            score         = score,
-        )
-
-        // ── Smart wake banner ──────────────────────────────────────────────────
-        if (session.fired_reason == "favorable") {
-            SmartWakeBanner()
-        }
-
-        Spacer(Modifier.height(24.dp))
-
-        // ── Sleep stages + hypnogram ───────────────────────────────────────────
-        SleepStagesSection(session = session)
-
-        Spacer(Modifier.height(4.dp))
-
-        // ── Stage summary (inline, no card) ───────────────────────────────────
-        StageSummaryRow(durations = durations, modifier = Modifier.padding(horizontal = 16.dp))
-
-        Spacer(Modifier.height(28.dp))
-
-        // ── Insights ──────────────────────────────────────────────────────────
-        if (insights.isNotEmpty()) {
-            InsightsSection(insights = insights, modifier = Modifier.padding(horizontal = 16.dp))
-            Spacer(Modifier.height(28.dp))
-        }
-
-        // ── This week ─────────────────────────────────────────────────────────
-        ThisWeekSection(
-            sessions      = sessions,
-            currentId     = session.id,
-            sessionDate   = bedInstant?.atZone(zone)?.toLocalDate(),
-            modifier      = Modifier.padding(horizontal = 16.dp),
-        )
-
-        Spacer(Modifier.height(40.dp))
-    }
-}
-
-// ─── Hero section ─────────────────────────────────────────────────────────────
-
-@Composable
-private fun HeroSection(
-    timeInBedMins: Long,
-    sleepMins: Long,
-    bedText: String,
-    wakeText: String,
-    winStartStr: String,
-    winEndStr: String,
-    score: Int,
-) {
-    val c = LocalSleepColors.current
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(Brush.verticalGradient(listOf(c.surface, c.bg))),
-    ) {
-        // Ambient glow
-        Box(
-            modifier = Modifier
-                .size(200.dp)
-                .align(Alignment.TopCenter)
-                .background(Brush.radialGradient(listOf(c.primary.copy(0.10f), Color.Transparent))),
-        )
-
-        Column(modifier = Modifier.fillMaxWidth().padding(bottom = 20.dp)) {
-            Row(
-                modifier          = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 20.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                // Left — time in bed
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Time in bed", fontSize = 11.sp, color = c.textSecondary)
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        formatDuration(timeInBedMins),
-                        fontSize   = 22.sp,
-                        fontWeight = FontWeight.Bold,
-                        color      = c.textPrimary,
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        "$bedText – $wakeText",
-                        fontSize   = 11.sp,
-                        color      = c.textSecondary,
-                        lineHeight = 15.sp,
-                    )
-                }
-
-                // Center — score ring
-                val ringColor = scoreColor(score)
-                Box(modifier = Modifier.size(120.dp), contentAlignment = Alignment.Center) {
-                    Canvas(modifier = Modifier.fillMaxSize()) {
-                        val sw    = 9.dp.toPx()
-                        val inset = sw / 2f
-                        val rect  = Size(size.width - sw, size.height - sw)
-                        // Background track
-                        drawArc(
-                            color      = c.surface2,
-                            startAngle = -90f, sweepAngle = 360f,
-                            useCenter  = false,
-                            topLeft    = Offset(inset, inset), size = rect,
-                            style      = Stroke(sw, cap = StrokeCap.Round),
-                        )
-                        // Filled arc proportional to score
-                        drawArc(
-                            color      = ringColor,
-                            startAngle = -90f,
-                            sweepAngle = 360f * (score / 100f),
-                            useCenter  = false,
-                            topLeft    = Offset(inset, inset), size = rect,
-                            style      = Stroke(sw, cap = StrokeCap.Round),
-                        )
-                    }
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(
-                            score.toString(),
-                            fontSize   = 28.sp,
-                            fontWeight = FontWeight.Bold,
-                            color      = ringColor,
-                        )
-                        Text(
-                            "Score",
-                            fontSize   = 12.sp,
-                            color      = c.textSecondary,
-                        )
-                    }
-                }
-
-                // Right — total sleep
-                Column(
-                    modifier            = Modifier.weight(1f),
-                    horizontalAlignment = Alignment.End,
-                ) {
-                    Text("Total sleep", fontSize = 11.sp, color = c.textSecondary)
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        formatDuration(sleepMins),
-                        fontSize   = 22.sp,
-                        fontWeight = FontWeight.Bold,
-                        color      = c.textPrimary,
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    Text("Smart wake", fontSize = 11.sp, color = c.textSecondary)
-                    Text(
-                        "$winStartStr – $winEndStr",
-                        fontSize   = 11.sp,
-                        color      = c.textAccent,
-                        textAlign  = TextAlign.End,
-                        lineHeight = 15.sp,
-                    )
-                }
+            if (session != null) {
+                NightContent(session = session)
+            } else {
+                EmptyNightBlock(onBackToTonight = { currentPage = newestDataIdx; onRefresh() })
             }
+
+            WeekStrip(
+                sessions   = sessions,
+                anchorDate = day,
+                onSelect   = ::navigateTo,
+                onJumpWeek = ::jumpWeek,
+            )
+
+            Spacer(Modifier.height(34.dp))
         }
     }
 }
 
-// ─── Smart wake banner ────────────────────────────────────────────────────────
+// ─── Header ────────────────────────────────────────────────────────────────────
 
 @Composable
-private fun SmartWakeBanner() {
+private fun ReportHeader(
+    eyebrow: String,
+    dateLine: String,
+    canOlder: Boolean,
+    canNewer: Boolean,
+    onOlder: () -> Unit,
+    onNewer: () -> Unit,
+) {
     val c = LocalSleepColors.current
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(c.surface)
-            .padding(horizontal = 20.dp, vertical = 14.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Box(
-            modifier         = Modifier
-                .size(36.dp)
-                .clip(CircleShape)
-                .background(c.primary.copy(0.15f)),
-            contentAlignment = Alignment.Center,
+        ArrowButton("‹", enabled = canOlder, onClick = onOlder)   // ‹
+        Column(
+            modifier = Modifier.weight(1f),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Text("✨", fontSize = 16.sp)
+            Eyebrow(eyebrow)
+            Spacer(Modifier.height(4.dp))
+            Text(dateLine, fontFamily = PlexSans, fontSize = 13.sp, color = c.dim)
         }
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                "You woke during optimal light sleep.",
-                fontSize   = 13.sp,
-                fontWeight = FontWeight.SemiBold,
-                color      = c.textPrimary,
-            )
-            Text(
-                "Great way to start your day!",
-                fontSize = 12.sp,
-                color    = c.textSecondary,
-            )
-        }
+        ArrowButton("›", enabled = canNewer, onClick = onNewer)   // ›
     }
 }
 
-// ─── Sleep stages section ─────────────────────────────────────────────────────
+@Composable
+private fun ArrowButton(glyph: String, enabled: Boolean, onClick: () -> Unit) {
+    val c = LocalSleepColors.current
+    val alpha = if (enabled) 1f else 0.3f
+    Box(
+        modifier = Modifier
+            .size(44.dp)
+            .clip(CircleShape)
+            .border(1.dp, c.lineStrong.copy(alpha = c.lineStrong.alpha * alpha), CircleShape)
+            .clickable(enabled = enabled, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(glyph, fontFamily = InstrumentSerif, fontSize = 22.sp, color = c.text.copy(alpha = alpha))
+    }
+}
+
+// ─── Single night content ──────────────────────────────────────────────────────
 
 @Composable
-private fun SleepStagesSection(session: SessionRecord) {
+private fun NightContent(session: SessionRecord) {
     val c = LocalSleepColors.current
-    if (session.stages.isEmpty()) return
-    Column(modifier = Modifier.fillMaxWidth()) {
+    val zone = ZoneId.systemDefault()
+
+    val durations = remember(session.id) { computeStageDurations(session.stages) }
+    val wakeBouts = remember(session.id) { countWakeBouts(session.stages) }
+    val score     = remember(session.id) { computeSleepScore(durations, wakeBouts, session.fired_reason) }
+    val insights  = remember(session.id) { generateInsights(durations, session.fired_reason, wakeBouts) }
+    val ribbon    = remember(session.id) { buildRibbon(session) }
+
+    val bedInstant  = runCatching { Instant.parse(session.started_at) }.getOrNull()
+    val wakeInstant = runCatching { Instant.parse(session.ended_at) }.getOrNull()
+    val winStart    = runCatching { Instant.parse(session.window_start) }.getOrNull()
+    val winEnd      = runCatching { Instant.parse(session.window_end) }.getOrNull()
+
+    val timeInBedMins = if (bedInstant != null && wakeInstant != null)
+        Duration.between(bedInstant, wakeInstant).toMinutes().coerceAtLeast(0)
+    else durations.totalMins
+    val asleepMins = minOf(durations.sleepingMins, timeInBedMins)
+    val wokeAt = wakeInstant?.atZone(zone)?.format(ClockFmt) ?: "—"
+
+    val gutter = Modifier.padding(horizontal = 26.dp)
+    val (verdictTitle, verdictBody) = verdictFor(score)
+
+    Spacer(Modifier.height(10.dp))
+
+    // ── Score ring + verdict ────────────────────────────────────────────────
+    Row(
+        modifier = gutter.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(18.dp),
+    ) {
+        ScoreRing(score = score)
+        Column(modifier = Modifier.weight(1f)) {
+            Text(verdictTitle, fontFamily = InstrumentSerif, fontSize = 28.sp, lineHeight = 32.sp, color = c.text)
+            Spacer(Modifier.height(6.dp))
+            Text(verdictBody, fontFamily = PlexSans, fontSize = 13.sp, lineHeight = 19.sp, color = c.dim)
+        }
+    }
+
+    Spacer(Modifier.height(26.dp))
+
+    // ── Metric trio ─────────────────────────────────────────────────────────
+    MetricTrio(
+        inBed  = formatDuration(timeInBedMins),
+        asleep = formatDuration(asleepMins),
+        wokeAt = wokeAt,
+        modifier = gutter,
+    )
+
+    Spacer(Modifier.height(26.dp))
+
+    // ── Your night — hypnogram ──────────────────────────────────────────────
+    val winLabel = if (winStart != null && winEnd != null)
+        "window ${winStart.atZone(zone).format(ClockFmt)}–${winEnd.atZone(zone).format(ClockFmt)}"
+    else null
+    Column(modifier = gutter.fillMaxWidth()) {
         Row(
-            modifier          = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            Text(
-                "Sleep stages",
-                fontSize   = 18.sp,
-                fontWeight = FontWeight.Bold,
-                color      = c.textPrimary,
-            )
-            Icon(Icons.Outlined.Info, null, tint = c.textSecondary, modifier = Modifier.size(18.dp))
+            Text("Your night", fontFamily = PlexSans, fontWeight = FontWeight.Medium, fontSize = 15.sp, color = c.text)
+            if (winLabel != null) MonoLabel(winLabel, color = c.accent)
         }
-        Spacer(Modifier.height(12.dp))
-        SleepHypnogram(
-            stages   = session.stages,
-            modifier = Modifier.fillMaxWidth().height(200.dp),
+        Spacer(Modifier.height(14.dp))
+        NightRibbon(
+            segments       = ribbon.segments,
+            totalMinutes   = ribbon.totalMin,
+            modifier       = Modifier.fillMaxWidth().height(152.dp),
+            bandHeight     = 24.dp,
+            mode           = RibbonMode.FULL,
+            windowStartMin = ribbon.windowStartMin,
+            windowEndMin   = ribbon.windowEndMin,
+            wakeMarkerMin  = ribbon.wakeMarkerMin,
         )
+        Spacer(Modifier.height(8.dp))
+        Box(Modifier.fillMaxWidth().height(1.dp).background(c.line))
+        Spacer(Modifier.height(8.dp))
+        AxisRow(ribbon)
+    }
+
+    Spacer(Modifier.height(26.dp))
+
+    // ── Stage breakdown ─────────────────────────────────────────────────────
+    StageBreakdown(durations = durations, modifier = gutter)
+
+    Spacer(Modifier.height(26.dp))
+
+    // ── What we noticed ─────────────────────────────────────────────────────
+    if (insights.isNotEmpty()) {
+        Column(modifier = gutter.fillMaxWidth()) {
+            Text("What we noticed", fontFamily = InstrumentSerif, fontSize = 26.sp, color = c.text)
+            Spacer(Modifier.height(14.dp))
+            insights.forEachIndexed { i, insight ->
+                InsightCard(insight)
+                if (i < insights.lastIndex) Spacer(Modifier.height(12.dp))
+            }
+        }
+        Spacer(Modifier.height(26.dp))
     }
 }
 
-// ─── Stage summary row ────────────────────────────────────────────────────────
+// ─── Axis row under the ribbon ──────────────────────────────────────────────────
 
 @Composable
-private fun StageSummaryRow(durations: StageDurations, modifier: Modifier = Modifier) {
+private fun AxisRow(ribbon: RibbonData) {
     val c = LocalSleepColors.current
-    data class Item(val label: String, val mins: Long, val color: Color)
-    val total = durations.totalMins.toFloat().coerceAtLeast(1f)
-    // Only show stages that actually have data — a binary (Light/Deep) night
-    // shouldn't render empty "Awake 0m 0%" / "REM 0m 0%" tiles.
-    val items = listOf(
-        Item("Awake", durations.awakeMins, StageColorAwake),
-        Item("REM",   durations.remMins,   StageColorREM),
-        Item("Light", durations.lightMins, StageColorLight),
-        Item("Deep",  durations.deepMins,  StageColorDeep),
-    ).filter { it.mins > 0L }
+    val zone = ZoneId.systemDefault()
+    val ticks = if (ribbon.originMs == 0L) emptyList() else listOf(0f, 0.25f, 0.5f, 0.75f, 1f).map { f ->
+        Instant.ofEpochMilli(ribbon.originMs + (ribbon.totalMin * f * 60_000L).toLong())
+            .atZone(zone).format(AxisFmt)
+    }
+    if (ticks.isEmpty()) return
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        ticks.forEach { MonoLabel(it, color = c.faint, size = 10.sp) }
+    }
+}
+
+// ─── Metric trio ─────────────────────────────────────────────────────────────
+
+@Composable
+private fun MetricTrio(inBed: String, asleep: String, wokeAt: String, modifier: Modifier = Modifier) {
+    val c = LocalSleepColors.current
     Row(
-        modifier              = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
+        modifier = modifier
+            .fillMaxWidth()
+            .height(IntrinsicSize.Min)
+            .clip(RoundedCornerShape(18.dp))
+            .background(c.line),
     ) {
-        items.forEach { item ->
-            Column(
-                modifier            = Modifier.weight(1f),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Row(
-                    verticalAlignment     = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(8.dp)
-                            .clip(CircleShape)
-                            .background(item.color),
-                    )
-                    Text(item.label, fontSize = 11.sp, color = item.color, fontWeight = FontWeight.Medium)
-                }
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    formatDuration(item.mins),
-                    fontSize   = 15.sp,
-                    fontWeight = FontWeight.Bold,
-                    color      = c.textPrimary,
-                    textAlign  = TextAlign.Center,
-                )
-                Text(
-                    "${((item.mins / total) * 100).roundToInt()}%",
-                    fontSize  = 11.sp,
-                    color     = c.textSecondary,
-                    textAlign = TextAlign.Center,
-                )
-            }
-        }
+        MetricCell("IN BED", inBed, Modifier.weight(1f))
+        Spacer(Modifier.width(1.dp).fillMaxHeight())
+        MetricCell("ASLEEP", asleep, Modifier.weight(1f))
+        Spacer(Modifier.width(1.dp).fillMaxHeight())
+        MetricCell("WOKE AT", wokeAt, Modifier.weight(1f))
     }
 }
 
-// ─── Insights section ─────────────────────────────────────────────────────────
-
 @Composable
-private fun InsightsSection(insights: List<Insight>, modifier: Modifier = Modifier) {
+private fun MetricCell(caption: String, value: String, modifier: Modifier = Modifier) {
     val c = LocalSleepColors.current
+    Column(
+        modifier = modifier.fillMaxHeight().background(c.surface).padding(vertical = 16.dp, horizontal = 14.dp),
+    ) {
+        Text(caption, fontFamily = PlexMono, fontSize = 10.sp, letterSpacing = 1.4.sp, color = c.faint)
+        Spacer(Modifier.height(6.dp))
+        Text(value, fontFamily = InstrumentSerif, fontSize = 26.sp, color = c.text)
+    }
+}
+
+// ─── Stage breakdown ───────────────────────────────────────────────────────────
+
+@Composable
+private fun StageBreakdown(durations: StageDurations, modifier: Modifier = Modifier) {
+    val c = LocalSleepColors.current
+    data class Row4(val name: String, val mins: Long, val color: Color)
+    val rows = listOf(
+        Row4("Deep",  durations.deepMins,  c.stageDeep),
+        Row4("REM",   durations.remMins,   c.stageRem),
+        Row4("Light", durations.lightMins, c.stageLight),
+        Row4("Awake", durations.awakeMins, c.stageAwake),
+    )
+    val maxMins = rows.maxOf { it.mins }.coerceAtLeast(1L)
+
     Column(modifier = modifier.fillMaxWidth()) {
-        Text(
-            "Sleep insights",
-            fontSize   = 18.sp,
-            fontWeight = FontWeight.Bold,
-            color      = c.textPrimary,
-        )
-        Spacer(Modifier.height(12.dp))
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(20.dp))
-                .background(c.surface),
-        ) {
-            insights.forEachIndexed { index, insight ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 14.dp),
-                    verticalAlignment     = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+        rows.forEach { r ->
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 13.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(Modifier.size(12.dp).clip(RoundedCornerShape(4.dp)).background(r.color))
+                Spacer(Modifier.width(12.dp))
+                Text(r.name, fontFamily = PlexSans, fontSize = 15.sp, color = c.text)
+                Spacer(Modifier.weight(1f))
+                // proportional track
+                Box(
+                    modifier = Modifier.width(84.dp).height(4.dp)
+                        .clip(RoundedCornerShape(999.dp)).background(c.surface2),
                 ) {
                     Box(
-                        modifier         = Modifier
-                            .size(42.dp)
-                            .clip(CircleShape)
-                            .background(insight.color.copy(0.15f)),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(insight.emoji, fontSize = 18.sp)
-                    }
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            insight.title,
-                            fontSize   = 14.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color      = c.textPrimary,
-                            lineHeight = 19.sp,
-                        )
-                        Text(
-                            insight.subtitle,
-                            fontSize   = 12.sp,
-                            color      = c.textSecondary,
-                            lineHeight = 17.sp,
-                        )
-                    }
-                }
-                if (index < insights.lastIndex) {
-                    HorizontalDivider(
-                        modifier  = Modifier.padding(start = 72.dp),
-                        color     = c.border,
-                        thickness = 0.5.dp,
+                        Modifier.fillMaxHeight()
+                            .fillMaxWidth(fraction = (r.mins.toFloat() / maxMins).coerceIn(0f, 1f))
+                            .clip(RoundedCornerShape(999.dp)).background(r.color),
                     )
                 }
+                Spacer(Modifier.width(14.dp))
+                Text(
+                    formatDuration(r.mins),
+                    modifier = Modifier.width(62.dp),
+                    fontFamily = PlexMono, fontSize = 13.sp, color = c.dim,
+                    textAlign = TextAlign.End,
+                )
+            }
+            Box(Modifier.fillMaxWidth().height(1.dp).background(c.line))
+        }
+    }
+}
+
+// ─── Insight card ──────────────────────────────────────────────────────────────
+
+@Composable
+private fun InsightCard(insight: Insight) {
+    val c = LocalSleepColors.current
+    val dotColor = when (insight.tone) {
+        InsightTone.GOOD  -> c.good
+        InsightTone.DEEP  -> c.stageDeep
+        InsightTone.REM   -> c.stageRem
+        InsightTone.AWAKE -> c.stageAwake
+    }
+    NfCard(radius = 18.dp, padding = 16.dp) {
+        Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Box(Modifier.padding(top = 5.dp).size(9.dp).clip(CircleShape).background(dotColor))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(insight.title, fontFamily = PlexSans, fontWeight = FontWeight.Medium, fontSize = 15.sp, color = c.text)
+                Spacer(Modifier.height(3.dp))
+                Text(insight.subtitle, fontFamily = PlexSans, fontSize = 13.sp, lineHeight = 19.sp, color = c.dim)
             }
         }
     }
 }
 
-// ─── This week section ────────────────────────────────────────────────────────
+// ─── Empty night block ───────────────────────────────────────────────────────
 
 @Composable
-private fun ThisWeekSection(
+private fun EmptyNightBlock(onBackToTonight: () -> Unit) {
+    val c = LocalSleepColors.current
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 70.dp, horizontal = 26.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Box(Modifier.size(82.dp), contentAlignment = Alignment.Center) {
+            Canvas(Modifier.fillMaxSize()) {
+                drawCircle(
+                    color = c.lineStrong,
+                    radius = size.minDimension / 2f - 1.dp.toPx(),
+                    style = Stroke(
+                        width = 1.5.dp.toPx(),
+                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 6f)),
+                    ),
+                )
+            }
+            Text("—", fontFamily = InstrumentSerif, fontSize = 34.sp, color = c.dim)
+        }
+        Spacer(Modifier.height(18.dp))
+        Text("No sleep recorded", fontFamily = InstrumentSerif, fontSize = 26.sp, color = c.text)
+        Spacer(Modifier.height(10.dp))
+        Text(
+            "Your watch wasn't worn that night. Nothing to fix — we'll pick things up tonight.",
+            modifier = Modifier.widthIn(max = 260.dp),
+            fontFamily = PlexSans, fontSize = 14.sp, lineHeight = 21.sp, color = c.dim,
+            textAlign = TextAlign.Center,
+        )
+        Spacer(Modifier.height(22.dp))
+        SecondaryButton("Back to tonight", onClick = onBackToTonight, modifier = Modifier.widthIn(max = 220.dp))
+    }
+}
+
+// ─── Week strip ────────────────────────────────────────────────────────────────
+
+@Composable
+private fun WeekStrip(
     sessions: List<SessionRecord>,
-    currentId: Long,
-    sessionDate: LocalDate?,
-    modifier: Modifier = Modifier,
+    anchorDate: LocalDate,
+    onSelect: (LocalDate) -> Unit,
+    onJumpWeek: (Int) -> Unit,
 ) {
     val c = LocalSleepColors.current
     val zone = ZoneId.systemDefault()
 
-    // Build Sun–Sat week around the current session date (week starts Sunday).
-    val anchor    = sessionDate ?: LocalDate.now()
-    val weekStart = anchor.with(java.time.temporal.TemporalAdjusters.previousOrSame(DayOfWeek.SUNDAY))
+    val weekStart = anchorDate.with(TemporalAdjusters.previousOrSame(DayOfWeek.SUNDAY))
     val weekDays  = (0..6).map { weekStart.plusDays(it.toLong()) }
+    val weekEnd   = weekDays.last()
 
-    // Index sessions by their bed date
-    val sessionByDate = sessions.associateBy { s ->
-        runCatching { Instant.parse(s.started_at) }.getOrNull()
-            ?.atZone(zone)?.toLocalDate()
+    // Sessions filed under their wake-up (ended_at) date, matching the pager.
+    val byDate = remember(sessions) {
+        sessions.mapNotNull { s ->
+            runCatching { Instant.parse(s.ended_at).atZone(zone).toLocalDate() }.getOrNull()?.let { it to s }
+        }.toMap()
     }
+    val today = LocalDate.now(zone)
 
-    val cards = weekDays.map { date ->
-        val s = sessionByDate[date]
+    data class Cell(
+        val date: LocalDate,
+        val abbrev: String,
+        val hasData: Boolean,
+        val score: Int,
+        val fracs: List<Pair<Color, Float>>,
+        val selected: Boolean,
+        val navigable: Boolean,
+    )
+
+    val cells = weekDays.map { date ->
+        val s = byDate[date]
         if (s != null) {
-            val d     = computeStageDurations(s.stages)
+            val d = computeStageDurations(s.stages)
             val bouts = countWakeBouts(s.stages)
-            WeekCard(
-                dayName      = date.format(DayNameFmt),
-                dayNum       = date.dayOfMonth.toString(),
-                durationMins = d.sleepingMins,
-                stageFracs   = stageFracsOf(d),
-                isCurrent    = s.id == currentId,
-                hasData      = true,
-                score        = computeSleepScore(d, bouts, s.fired_reason),
+            val t = d.totalMins.toFloat().coerceAtLeast(1f)
+            Cell(
+                date = date,
+                abbrev = date.format(WeekDayAbbrev),
+                hasData = true,
+                score = computeSleepScore(d, bouts, s.fired_reason),
+                fracs = listOf(
+                    c.stageDeep  to d.deepMins  / t,
+                    c.stageLight to d.lightMins / t,
+                    c.stageRem   to d.remMins   / t,
+                    c.stageAwake to d.awakeMins / t,
+                ).filter { it.second > 0f },
+                selected = date == anchorDate,
+                navigable = true,
             )
         } else {
-            WeekCard(
-                dayName      = date.format(DayNameFmt),
-                dayNum       = date.dayOfMonth.toString(),
-                durationMins = 0,
-                stageFracs   = emptyMap(),
-                isCurrent    = false,
-                hasData      = false,
-            )
+            Cell(date, date.format(WeekDayAbbrev), false, 0, emptyList(),
+                selected = date == anchorDate, navigable = !date.isAfter(today))
         }
     }
 
-    val avgMins = cards.filter { it.hasData }
-        .map { it.durationMins }.average()
-        .let { if (it.isNaN()) 0.0 else it }
-    val avgText = if (avgMins > 0) "Avg ${formatDuration(avgMins.toLong())}" else ""
+    val scores = cells.filter { it.hasData }.map { it.score }
+    val avg = if (scores.isEmpty()) null else scores.average().roundToInt()
 
-    Column(modifier = modifier.fillMaxWidth()) {
-        Row(
-            modifier              = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment     = Alignment.CenterVertically,
-        ) {
-            Text("This week", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = c.textPrimary)
-            if (avgText.isNotEmpty()) {
-                Text(avgText, fontSize = 13.sp, color = c.textAccent, fontWeight = FontWeight.Medium)
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Box(Modifier.fillMaxWidth().height(1.dp).background(c.line))
+        Spacer(Modifier.height(20.dp))
+        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 26.dp)) {
+            // pager row
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                ArrowButton("‹", enabled = true, onClick = { onJumpWeek(1) })
+                Text(
+                    "${weekStart.format(DayNumFmt)}–${weekEnd.format(WeekEndFmt)}",
+                    modifier = Modifier.weight(1f),
+                    textAlign = TextAlign.Center,
+                    fontFamily = PlexSans, fontSize = 13.sp, color = c.dim,
+                )
+                ArrowButton("›", enabled = true, onClick = { onJumpWeek(-1) })
             }
-        }
-        Spacer(Modifier.height(12.dp))
-        LazyRow(
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            contentPadding        = PaddingValues(end = 4.dp),
-        ) {
-            items(cards) { card ->
-                WeekMiniCard(card)
+            Spacer(Modifier.height(14.dp))
+            // seven night cells
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                cells.forEach { cell -> WeekCell(cell.date, cell.abbrev, cell.hasData, cell.score,
+                    cell.fracs, cell.selected, cell.navigable, onSelect, Modifier.weight(1f)) }
+            }
+            Spacer(Modifier.height(16.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("Week average", fontFamily = PlexSans, fontSize = 13.sp, color = c.dim)
+                Text(avg?.toString() ?: "—", fontFamily = PlexMono, fontSize = 13.sp, color = c.text)
             }
         }
     }
 }
 
 @Composable
-private fun WeekMiniCard(card: WeekCard) {
+private fun WeekCell(
+    date: LocalDate,
+    abbrev: String,
+    hasData: Boolean,
+    score: Int,
+    fracs: List<Pair<Color, Float>>,
+    selected: Boolean,
+    navigable: Boolean,
+    onSelect: (LocalDate) -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val c = LocalSleepColors.current
     Column(
-        modifier = Modifier
-            .width(70.dp)
-            .clip(RoundedCornerShape(18.dp))
-            .background(
-                if (card.isCurrent)
-                    Brush.verticalGradient(listOf(c.primary.copy(0.20f), c.surface))
-                else
-                    Brush.verticalGradient(listOf(c.surface, c.surface)),
-            )
-            .then(
-                if (card.isCurrent)
-                    Modifier.border(1.dp, c.primary.copy(0.30f), RoundedCornerShape(18.dp))
-                else Modifier
-            )
-            .padding(vertical = 12.dp, horizontal = 6.dp),
+        modifier = modifier
+            .clip(RoundedCornerShape(14.dp))
+            .background(if (selected) c.surface2 else Color.Transparent)
+            .then(if (selected) Modifier.border(1.dp, c.lineStrong, RoundedCornerShape(14.dp)) else Modifier)
+            .clickable(enabled = navigable) { onSelect(date) }
+            .padding(vertical = 10.dp, horizontal = 2.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(3.dp),
     ) {
+        Text(abbrev, fontFamily = PlexMono, fontSize = 10.sp, letterSpacing = 0.8.sp, color = c.faint)
+        Spacer(Modifier.height(6.dp))
         Text(
-            card.dayName,
-            fontSize   = 10.sp,
-            color      = if (card.isCurrent) c.primary.copy(0.9f) else c.textSecondary,
-            fontWeight = FontWeight.Medium,
+            if (hasData) score.toString() else "—",
+            fontFamily = InstrumentSerif, fontSize = 20.sp,
+            color = when {
+                !hasData -> c.faint
+                selected -> c.accent
+                else     -> c.text
+            },
         )
-        Text(
-            card.dayNum,
-            fontSize   = 12.sp,
-            fontWeight = FontWeight.Bold,
-            color      = if (card.isCurrent) c.primary else c.textPrimary,
-        )
-        Spacer(Modifier.height(4.dp))
-
-        // Score ring
-        val miniRingColor = if (card.hasData) scoreColor(card.score) else c.surface2
-        Box(modifier = Modifier.size(44.dp), contentAlignment = Alignment.Center) {
-            Canvas(modifier = Modifier.fillMaxSize()) {
-                val sw    = 3.5.dp.toPx()
-                val inset = sw / 2f
-                val rect  = Size(size.width - sw, size.height - sw)
-                drawArc(
-                    color      = c.surface2,
-                    startAngle = -90f, sweepAngle = 360f,
-                    useCenter  = false,
-                    topLeft    = Offset(inset, inset), size = rect,
-                    style      = Stroke(sw, cap = StrokeCap.Round),
-                )
-                if (card.hasData) {
-                    drawArc(
-                        color      = miniRingColor,
-                        startAngle = -90f,
-                        sweepAngle = 360f * (card.score / 100f),
-                        useCenter  = false,
-                        topLeft    = Offset(inset, inset), size = rect,
-                        style      = Stroke(sw, cap = StrokeCap.Round),
-                    )
+        Spacer(Modifier.height(6.dp))
+        // 3px mini bar
+        Row(Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(999.dp))) {
+            if (fracs.isEmpty()) {
+                Box(Modifier.fillMaxSize().background(c.line))
+            } else {
+                fracs.forEach { (col, f) ->
+                    Box(Modifier.fillMaxHeight().weight(f).background(col))
                 }
             }
-            Text(
-                if (card.hasData) card.score.toString() else "–",
-                fontSize   = 14.sp,
-                fontWeight = if (card.hasData) FontWeight.Bold else FontWeight.Normal,
-                color      = if (card.hasData) miniRingColor else c.textSecondary,
-            )
-        }
-
-        // Tiny stage dots
-        if (card.hasData) {
-            Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-                listOf(
-                    StageColorAwake to (card.stageFracs["awake"] ?: 0f),
-                    StageColorDeep  to (card.stageFracs["deep"]  ?: 0f),
-                    StageColorLight to (card.stageFracs["light"] ?: 0f),
-                    StageColorREM   to (card.stageFracs["rem"]   ?: 0f),
-                ).filter { it.second > 0.03f }.take(3).forEach { (col, _) ->
-                    Box(
-                        modifier = Modifier
-                            .size(5.dp)
-                            .clip(CircleShape)
-                            .background(col),
-                    )
-                }
-            }
-        }
-
-        Spacer(Modifier.height(2.dp))
-        Text(
-            if (card.hasData) formatDuration(card.durationMins) else "—",
-            fontSize  = 10.sp,
-            color     = c.textSecondary,
-            textAlign = TextAlign.Center,
-        )
-    }
-}
-
-// ─── Empty / loading ──────────────────────────────────────────────────────────
-
-@Composable
-private fun LoadingView() {
-    val c = LocalSleepColors.current
-    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text("🌙", fontSize = 40.sp)
-            Spacer(Modifier.height(16.dp))
-            Text("Loading your nights…", fontSize = 14.sp, color = c.textSecondary)
         }
     }
 }
 
+// ─── Loading / empty message ─────────────────────────────────────────────────
+
 @Composable
-private fun EmptyView() {
+private fun MessageView(message: String) {
     val c = LocalSleepColors.current
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(
-            modifier            = Modifier.padding(40.dp),
+            modifier = Modifier.padding(40.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Text("🌙", fontSize = 52.sp)
-            Spacer(Modifier.height(20.dp))
-            Text(
-                "No nights recorded yet",
-                fontSize   = 20.sp,
-                fontWeight = FontWeight.Bold,
-                color      = c.textPrimary,
-                textAlign  = TextAlign.Center,
-            )
-            Spacer(Modifier.height(10.dp))
-            Text(
-                "Set a wake-up window tonight and your sleep history will appear here.",
-                fontSize   = 14.sp,
-                color      = c.textSecondary,
-                textAlign  = TextAlign.Center,
-                lineHeight = 20.sp,
-            )
+            Eyebrow("SLEEP REPORT")
+            Spacer(Modifier.height(14.dp))
+            Text(message, fontFamily = InstrumentSerif, fontSize = 26.sp, color = c.text, textAlign = TextAlign.Center)
         }
     }
 }

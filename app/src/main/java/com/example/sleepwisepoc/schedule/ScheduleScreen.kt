@@ -1,73 +1,57 @@
 package com.example.sleepwisepoc.schedule
 
-import android.app.Activity
 import android.app.Application
-import android.media.RingtoneManager
-import android.net.Uri
-import android.os.Build
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.ChevronRight
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
-import androidx.compose.material3.RadioButton
-import androidx.compose.material3.RadioButtonDefaults
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.sleepwisepoc.ui.theme.LocalSleepColors
-import kotlinx.coroutines.flow.MutableStateFlow
+import com.example.sleepwisepoc.ui.theme.*
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 
 // ─── ViewModel ────────────────────────────────────────────────────────────────
@@ -83,15 +67,16 @@ class ScheduleViewModel(application: Application) : AndroidViewModel(application
     fun saveDay(dayIndex: Int, day: DaySchedule) = viewModelScope.launch { store.saveDay(dayIndex, day) }
 }
 
-// ─── Day-of-week constants ────────────────────────────────────────────────────
+// ─── Day-of-week constants + formatters ───────────────────────────────────────
 
 private val DAY_LETTERS = listOf("S", "M", "T", "W", "T", "F", "S")
-private val DAY_NAMES   = listOf("Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday")
+private val DAY_NAMES    = listOf("Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday")
+private val WINDOW_OPTIONS = listOf(10, 15, 20, 30, 45, 60)
+
+private val HmFmt    = DateTimeFormatter.ofPattern("HH:mm") // 08:00 — hints
+private val ShortFmt = DateTimeFormatter.ofPattern("h:mm")  // 6:45 — cells & range
 
 // ─── Screen ───────────────────────────────────────────────────────────────────
-
-private val TimeFmt      = DateTimeFormatter.ofPattern("hh:mm a")
-private val ShortTimeFmt = DateTimeFormatter.ofPattern("h:mm")
 
 @Composable
 fun ScheduleScreen(
@@ -99,446 +84,290 @@ fun ScheduleScreen(
     viewModel: ScheduleViewModel = viewModel(),
 ) {
     val c = LocalSleepColors.current
-    val context = LocalContext.current
     val schedule by viewModel.schedule.collectAsState()
-    // selectedDay: 0=Sun … 6=Sat; default to Sunday (start of Israeli work week)
-    var selectedDay      by remember { mutableIntStateOf(0) }
-    var showTimePicker   by remember { mutableStateOf(false) }
-    var showSnoozePicker by remember { mutableStateOf(false) }
-    var isMultiSelect    by remember { mutableStateOf(false) }
-    var multiDays        by remember { mutableStateOf(emptySet<Int>()) }
 
-    val soundPickerLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        if (result.resultCode == Activity.RESULT_OK) {
-            val uri: Uri? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                result.data?.getParcelableExtra(RingtoneManager.EXTRA_RINGTONE_PICKED_URI, Uri::class.java)
-            } else {
-                @Suppress("DEPRECATION")
-                result.data?.getParcelableExtra(RingtoneManager.EXTRA_RINGTONE_PICKED_URI)
-            }
-            val day = schedule[selectedDay]
-            if (uri != null) {
-                val title = RingtoneManager.getRingtone(context, uri)?.getTitle(context) ?: "Custom"
-                viewModel.saveDay(selectedDay, day.copy(alarmSound = title, alarmSoundUri = uri.toString()))
-            } else {
-                viewModel.saveDay(selectedDay, day.copy(alarmSound = "Silent", alarmSoundUri = ""))
-            }
-        }
-    }
+    // The schedule is a map of day → {on, hour, minute, window}. Editing is
+    // multi-select: `selectedDays` is never empty (Sunday-first, Sunday default);
+    // every edit writes to the whole selection and implicitly switches those days on.
+    var selectedDays by remember { mutableStateOf(setOf(0)) }
+    val sel = selectedDays.ifEmpty { setOf(0) }
 
-    val day   = schedule[selectedDay]
-    val onSave: (DaySchedule) -> Unit = { viewModel.saveDay(selectedDay, it) }
+    val repDay   = schedule[sel.min()]              // representative values for the pickers
+    val allOn    = sel.all { schedule[it].smartAlarm }
+    val anyOff   = sel.any { !schedule[it].smartAlarm }
+    val sameTime = sel.map { schedule[it].wakeTime }.distinct().size == 1
 
-    val pickerInitialTime = if (isMultiSelect && multiDays.isNotEmpty())
-        schedule[multiDays.min()].wakeTime
-    else
-        day.wakeTime
-
-    if (showTimePicker) {
-        SleepTimePickerDialog(
-            initialTime = pickerInitialTime,
-            onConfirm = { time ->
-                if (isMultiSelect) {
-                    multiDays.forEach { d -> viewModel.saveDay(d, schedule[d].copy(wakeTime = time)) }
-                    isMultiSelect = false
-                    multiDays = emptySet()
-                } else {
-                    onSave(day.copy(wakeTime = time))
-                }
-                showTimePicker = false
-            },
-            onDismiss = { showTimePicker = false },
-        )
-    }
-
-    if (showSnoozePicker) {
-        PickerDialog(
-            title = "Snooze Duration",
-            options = SNOOZE_OPTIONS.map { "$it min" },
-            selected = "${day.snoozeMinutes} min",
-            onSelect = { label ->
-                val mins = label.removeSuffix(" min").toIntOrNull() ?: day.snoozeMinutes
-                onSave(day.copy(snoozeMinutes = mins))
-                showSnoozePicker = false
-            },
-            onDismiss = { showSnoozePicker = false },
-        )
+    fun editAll(transform: (DaySchedule) -> DaySchedule) {
+        sel.forEach { d -> viewModel.saveDay(d, transform(schedule[d])) }
     }
 
     Column(
         modifier = modifier
             .fillMaxSize()
             .background(c.bg)
-            .verticalScroll(rememberScrollState()),
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 26.dp),
     ) {
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(26.dp))
+        Eyebrow("SCHEDULE")
 
-        Column(modifier = Modifier.padding(horizontal = 24.dp)) {
-            Text("Schedule", fontSize = 34.sp, fontWeight = FontWeight.SemiBold, color = c.textPrimary)
-            Spacer(Modifier.height(3.dp))
-            Text("Set once, we handle the rest", fontSize = 14.sp, color = c.textSecondary)
+        Spacer(Modifier.height(14.dp))
+        Text(
+            "When should we wake you?",
+            fontFamily = InstrumentSerif, fontSize = 34.sp, lineHeight = 38.sp, color = c.text,
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "Pick the days, then set one time for all of them.",
+            fontFamily = PlexSans, fontSize = 14.sp, lineHeight = 20.sp, color = c.dim,
+        )
+
+        Spacer(Modifier.height(26.dp))
+
+        // ── Day row (Sunday-first) ─────────────────────────────────────────────
+        DayRow(schedule, sel) { d ->
+            selectedDays = when {
+                d in sel && sel.size > 1 -> sel - d   // deselect (but never the last one)
+                d in sel                 -> sel        // last remaining day stays selected
+                else                     -> sel + d
+            }
         }
 
         Spacer(Modifier.height(20.dp))
 
-        // ── Day circle picker ──────────────────────────────────────────────────
-        DayRowPicker(
-            selectedDay   = selectedDay,
-            schedule      = schedule,
-            isMultiSelect = isMultiSelect,
-            multiDays     = multiDays,
-            onSelect      = { selectedDay = it },
-            onToggle      = { d ->
-                val next = if (d in multiDays) multiDays - d else multiDays + d
-                multiDays = next
-                if (next.isEmpty()) isMultiSelect = false
+        // ── Editing row: selection label + hint, and the on/off toggle ─────────
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    if (sel.size == 1) DAY_NAMES[sel.first()] else "Editing ${sel.size} days together",
+                    fontFamily = PlexSans, fontWeight = FontWeight.Medium, fontSize = 15.sp, color = c.text,
+                )
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    when {
+                        anyOff    -> "Some days are off"
+                        !sameTime -> "Different times — pick one to set them all"
+                        else      -> "Alarm on at ${repDay.wakeTime.format(HmFmt)}"
+                    },
+                    fontFamily = PlexSans, fontSize = 13.sp, lineHeight = 18.sp, color = c.dim,
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            NfToggle(checked = allOn, onCheckedChange = { v -> editAll { it.copy(smartAlarm = v) } })
+        }
+
+        Spacer(Modifier.height(26.dp))
+
+        // ── Time-picker well ───────────────────────────────────────────────────
+        TimePickerWell(
+            hour   = repDay.wakeTime.hour,
+            minute = repDay.wakeTime.minute,
+            onHour = { h ->
+                val t = LocalTime.of(h, repDay.wakeTime.minute)
+                sel.forEach { viewModel.saveDay(it, schedule[it].copy(wakeTime = t, smartAlarm = true)) }
             },
-            onLongPress   = { d ->
-                isMultiSelect = true
-                multiDays = multiDays + d
+            onMinute = { m ->
+                val t = LocalTime.of(repDay.wakeTime.hour, m)
+                sel.forEach { viewModel.saveDay(it, schedule[it].copy(wakeTime = t, smartAlarm = true)) }
             },
         )
 
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(26.dp))
 
-        if (isMultiSelect) {
-            // ── Multi-select action bar ────────────────────────────────────────
-            Row(
-                modifier = Modifier
-                    .padding(horizontal = 16.dp)
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(c.primary.copy(alpha = 0.12f))
-                    .padding(horizontal = 14.dp, vertical = 6.dp),
-                verticalAlignment     = Alignment.CenterVertically,
-            ) {
-                Text(
-                    if (multiDays.isEmpty()) "Tap days to select"
-                    else "${multiDays.size} day${if (multiDays.size != 1) "s" else ""} selected",
-                    fontSize = 13.sp,
-                    color    = c.textPrimary,
-                    modifier = Modifier.weight(1f),
-                )
-                TextButton(
-                    onClick  = { if (multiDays.isNotEmpty()) showTimePicker = true },
-                    enabled  = multiDays.isNotEmpty(),
+        // ── Flexible window ────────────────────────────────────────────────────
+        val win   = repDay.windowMinutes
+        val wake  = repDay.wakeTime
+        val start = wake.minusMinutes(win.toLong())
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Flexible window", fontFamily = PlexSans, fontWeight = FontWeight.Medium, fontSize = 15.sp, color = c.text)
+            Text(
+                "${start.format(ShortFmt)} – ${wake.format(ShortFmt)}",
+                fontFamily = PlexMono, fontSize = 13.sp, color = c.accent,
+            )
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(7.dp),
+        ) {
+            WINDOW_OPTIONS.forEach { w ->
+                val on = w == win
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .heightIn(min = 52.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .then(
+                            if (on) Modifier.background(c.accentSoft).border(1.dp, c.accent, RoundedCornerShape(16.dp))
+                            else Modifier.border(1.dp, c.lineStrong, RoundedCornerShape(16.dp))
+                        )
+                        .clickable {
+                            sel.forEach { viewModel.saveDay(it, schedule[it].copy(windowMinutes = w, smartAlarm = true)) }
+                        },
+                    contentAlignment = Alignment.Center,
                 ) {
-                    Text("Set time", color = if (multiDays.isNotEmpty()) c.primary else c.textSecondary)
+                    Text("$w", fontFamily = PlexSans, fontSize = 13.sp, color = if (on) c.accent else c.dim)
                 }
-                TextButton(onClick = { isMultiSelect = false; multiDays = emptySet() }) {
-                    Text("Cancel", color = c.textSecondary)
-                }
-            }
-            Spacer(Modifier.height(10.dp))
-        } else {
-            Text(
-                "Hold a day to select multiple",
-                modifier = Modifier.padding(horizontal = 24.dp),
-                fontSize = 11.sp,
-                color    = c.textSecondary.copy(alpha = 0.7f),
-            )
-            Spacer(Modifier.height(8.dp))
-            // ── "Editing X" caption ────────────────────────────────────────────
-            Text(
-                text = buildAnnotatedString {
-                    append("Editing ")
-                    withStyle(SpanStyle(fontWeight = FontWeight.Bold, color = c.textPrimary)) {
-                        append(DAY_NAMES[selectedDay])
-                    }
-                },
-                modifier = Modifier.padding(horizontal = 24.dp),
-                fontSize = 13.sp,
-                color    = c.textSecondary,
-            )
-            Spacer(Modifier.height(16.dp))
-        }
-
-        // ── Single-day settings (hidden during multi-select) ──────────────────
-        if (!isMultiSelect) SettingsCard {
-            SettingsRow(
-                label = "Wake-up time",
-                value = day.wakeTime.format(TimeFmt),
-                onClick = { showTimePicker = true },
-            )
-
-            HorizontalDivider(color = c.border, thickness = 0.5.dp)
-
-            Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    Text("Smart window", fontSize = 15.sp, color = c.textPrimary)
-                    Text(
-                        "${day.windowMinutes} min",
-                        fontSize = 15.sp,
-                        color = c.textAccent,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                }
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    "Wake window: ${day.windowStart.format(shortFmt())} – ${day.wakeTime.format(shortFmt())}",
-                    fontSize = 12.sp,
-                    color = c.textSecondary,
-                )
-                Slider(
-                    value = day.windowMinutes.toFloat(),
-                    onValueChange = { onSave(day.copy(windowMinutes = it.toInt())) },
-                    valueRange = 15f..60f,
-                    steps = 8,
-                    colors = SliderDefaults.colors(
-                        thumbColor = c.primary,
-                        activeTrackColor = c.primary,
-                        inactiveTrackColor = c.surface2,
-                    ),
-                )
-            }
-
-            HorizontalDivider(color = c.border, thickness = 0.5.dp)
-
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 14.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column {
-                    Text("Smart Alarm", fontSize = 15.sp, color = c.textPrimary)
-                    Text("Wake me during light sleep", fontSize = 12.sp, color = c.textSecondary)
-                }
-                Switch(
-                    checked = day.smartAlarm,
-                    onCheckedChange = { onSave(day.copy(smartAlarm = it)) },
-                    colors = SwitchDefaults.colors(
-                        checkedThumbColor = c.textPrimary,
-                        checkedTrackColor = c.primary,
-                    ),
-                )
             }
         }
 
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(14.dp))
+        Text(
+            "We'll find your lightest moment in the $win minutes before ${wake.format(HmFmt)}. " +
+                "If you stay deep, we'll wake you right on time.",
+            fontFamily = PlexSans, fontSize = 13.sp, lineHeight = 19.sp, color = c.dim,
+        )
 
-        // Wake Experience
-        if (!isMultiSelect) SettingsCard {
-            Text(
-                "WAKE EXPERIENCE",
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-                fontSize = 11.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = c.textSecondary,
-                letterSpacing = 1.sp,
-            )
-            HorizontalDivider(color = c.border, thickness = 0.5.dp)
-            val displaySoundName = remember(day.alarmSoundUri, context) {
-                if (day.alarmSoundUri.isNullOrEmpty()) {
-                    val uri = RingtoneManager.getActualDefaultRingtoneUri(context, RingtoneManager.TYPE_ALARM)
-                    RingtoneManager.getRingtone(context, uri)?.getTitle(context) ?: "Default Alarm"
-                } else {
-                    day.alarmSound
-                }
-            }
-            SettingsRow(
-                label = "Alarm Sound",
-                value = displaySoundName,
-                valueColor = c.success,
-                onClick = {
-                    val currentUri = day.alarmSoundUri?.takeIf { it.isNotEmpty() }?.let { Uri.parse(it) }
-                    val intent = android.content.Intent(RingtoneManager.ACTION_RINGTONE_PICKER).apply {
-                        putExtra(RingtoneManager.EXTRA_RINGTONE_TYPE, RingtoneManager.TYPE_ALARM)
-                        putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_DEFAULT, true)
-                        putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_SILENT, false)
-                        putExtra(RingtoneManager.EXTRA_RINGTONE_TITLE, "Alarm Sound")
-                        if (currentUri != null) putExtra(RingtoneManager.EXTRA_RINGTONE_EXISTING_URI, currentUri)
-                    }
-                    soundPickerLauncher.launch(intent)
-                },
-            )
-            HorizontalDivider(color = c.border, thickness = 0.5.dp)
-            SettingsRow(
-                label = "Snooze",
-                value = "${day.snoozeMinutes} min",
-                onClick = { showSnoozePicker = true },
-            )
-        }
+        Spacer(Modifier.height(26.dp))
 
-        Spacer(Modifier.height(32.dp))
+        // Edits already persist as you make them; this commits the current selection.
+        PrimaryButton(
+            text = "Save schedule",
+            onClick = { sel.forEach { viewModel.saveDay(it, schedule[it]) } },
+        )
+
+        Spacer(Modifier.height(34.dp))
     }
 }
 
-// ─── Day row picker ───────────────────────────────────────────────────────────
+// ─── Day row ──────────────────────────────────────────────────────────────────
+
+@Composable
+private fun DayRow(schedule: SleepSchedule, selected: Set<Int>, onTap: (Int) -> Unit) {
+    val c = LocalSleepColors.current
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(7.dp),
+    ) {
+        for (i in 0..6) {
+            val d      = schedule[i]
+            val isSel  = i in selected
+            val on     = d.smartAlarm
+            val letterColor = when { isSel -> c.onAccent; on -> c.text; else -> c.faint }
+            val timeColor   = when { isSel -> c.onAccent.copy(alpha = 0.75f); on -> c.dim; else -> c.faint }
+
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .heightIn(min = 74.dp)
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(if (isSel) c.accent else c.surface)
+                    .clickable { onTap(i) }
+                    .padding(vertical = 12.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+            ) {
+                Text(DAY_LETTERS[i], fontFamily = PlexSans, fontWeight = FontWeight.Medium, fontSize = 13.sp, color = letterColor)
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    if (on) d.wakeTime.format(ShortFmt) else "off",
+                    fontFamily = PlexMono, fontSize = 9.sp, color = timeColor,
+                )
+            }
+        }
+    }
+}
+
+// ─── Time-picker well ─────────────────────────────────────────────────────────
+
+@Composable
+private fun TimePickerWell(hour: Int, minute: Int, onHour: (Int) -> Unit, onMinute: (Int) -> Unit) {
+    val c = LocalSleepColors.current
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(168.dp)
+            .clip(RoundedCornerShape(24.dp))
+            .background(c.surface)
+            .border(1.dp, c.line, RoundedCornerShape(24.dp)),
+        contentAlignment = Alignment.Center,
+    ) {
+        // Static center selection band — a 44px strip inset 10px, hairlines top & bottom.
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(44.dp)
+                .padding(horizontal = 10.dp)
+                .drawBehind {
+                    drawRect(color = c.lineStrong, topLeft = Offset(0f, 0f), size = Size(size.width, 1f))
+                    drawRect(color = c.lineStrong, topLeft = Offset(0f, size.height - 1f), size = Size(size.width, 1f))
+                },
+        )
+        // Numerals sit on top of the band and receive the scroll gestures.
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            ScrollPickerColumn(count = 24, selectedIndex = hour, onSelected = onHour, modifier = Modifier.width(92.dp))
+            Text(":", fontFamily = InstrumentSerif, fontSize = 40.sp, color = c.text)
+            ScrollPickerColumn(count = 60, selectedIndex = minute, onSelected = onMinute, modifier = Modifier.width(92.dp))
+        }
+    }
+}
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun DayRowPicker(
-    selectedDay: Int,
-    schedule: SleepSchedule,
-    isMultiSelect: Boolean,
-    multiDays: Set<Int>,
-    onSelect: (Int) -> Unit,
-    onToggle: (Int) -> Unit,
-    onLongPress: (Int) -> Unit,
+private fun ScrollPickerColumn(
+    count: Int,
+    selectedIndex: Int,
+    onSelected: (Int) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val c = LocalSleepColors.current
-    Row(
-        modifier              = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment     = Alignment.Top,
-    ) {
-        DAY_LETTERS.forEachIndexed { i, letter ->
-            val isSelected  = !isMultiSelect && i == selectedDay
-            val isChecked   = isMultiSelect && i in multiDays
-            val timeText    = schedule[i].wakeTime.format(ShortTimeFmt)
+    val itemHeightPx = with(LocalDensity.current) { 44.dp.toPx() }
+    val listState = rememberLazyListState()
+    val fling = rememberSnapFlingBehavior(lazyListState = listState)
 
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-                // Gal's multi-select (long-press to pick multiple days) + no
-                // rectangular ripple (selection is shown by the circle turning purple).
-                modifier = Modifier.combinedClickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                    onClick     = { if (isMultiSelect) onToggle(i) else onSelect(i) },
-                    onLongClick = { onLongPress(i) },
-                ),
+    // Which item sits in the center band right now.
+    val centered by remember {
+        derivedStateOf {
+            (listState.firstVisibleItemIndex +
+                if (listState.firstVisibleItemScrollOffset > itemHeightPx / 2f) 1 else 0)
+                .coerceIn(0, count - 1)
+        }
+    }
+
+    // Center the current value on mount and whenever the value changes externally
+    // (e.g. switching the selected day). Never fights an in-progress user drag.
+    LaunchedEffect(selectedIndex) {
+        if (!listState.isScrollInProgress) listState.scrollToItem(selectedIndex)
+    }
+
+    // Commit once the scroll settles.
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.isScrollInProgress }.collect { scrolling ->
+            if (!scrolling && centered != selectedIndex) onSelected(centered)
+        }
+    }
+
+    LazyColumn(
+        state = listState,
+        flingBehavior = fling,
+        horizontalAlignment = Alignment.CenterHorizontally,
+        contentPadding = PaddingValues(vertical = 62.dp), // 62 + 44 + 62 = 168 → item 0 centers
+        modifier = modifier.height(168.dp),
+    ) {
+        items(count) { i ->
+            val isSel = i == centered
+            Box(
+                modifier = Modifier.height(44.dp).fillMaxWidth(),
+                contentAlignment = Alignment.Center,
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(CircleShape)
-                        .background(
-                            when {
-                                isChecked  -> c.primary
-                                isSelected -> c.primary
-                                isMultiSelect -> c.surface2
-                                else       -> c.surface
-                            }
-                        )
-                        .then(
-                            if (isMultiSelect && !isChecked)
-                                Modifier.border(1.5.dp, c.border, CircleShape)
-                            else Modifier
-                        ),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        letter,
-                        fontSize   = 14.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color      = when {
-                            isChecked || isSelected -> Color.White
-                            else -> c.textSecondary
-                        },
-                    )
-                }
                 Text(
-                    timeText,
-                    fontSize = 10.sp,
-                    color    = when {
-                        isChecked  -> c.primary
-                        isSelected -> c.textPrimary
-                        else       -> c.textSecondary
-                    },
+                    "%02d".format(i),
+                    fontFamily = InstrumentSerif,
+                    fontSize = if (isSel) 40.sp else 30.sp,
+                    color = if (isSel) c.text else c.faint,
                 )
             }
         }
     }
 }
-
-// ─── Picker dialog ────────────────────────────────────────────────────────────
-
-@Composable
-private fun PickerDialog(
-    title: String,
-    options: List<String>,
-    selected: String,
-    onSelect: (String) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    val c = LocalSleepColors.current
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(title, color = c.textPrimary, fontWeight = FontWeight.SemiBold) },
-        text = {
-            Column {
-                options.forEach { option ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { onSelect(option) }
-                            .padding(vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        RadioButton(
-                            selected = option == selected,
-                            onClick = { onSelect(option) },
-                            colors = RadioButtonDefaults.colors(selectedColor = c.primary),
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        Text(option, fontSize = 15.sp, color = c.textPrimary)
-                    }
-                }
-            }
-        },
-        confirmButton = {},
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel", color = c.textSecondary)
-            }
-        },
-        containerColor = c.surface,
-    )
-}
-
-// ─── Reusable composables ─────────────────────────────────────────────────────
-
-@Composable
-private fun SettingsCard(content: @Composable ColumnScope.() -> Unit) {
-    val c = LocalSleepColors.current
-    Column(
-        modifier = Modifier
-            .padding(horizontal = 20.dp)
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(20.dp))
-            .background(c.surface),
-        content = content,
-    )
-}
-
-@Composable
-private fun SettingsRow(
-    label: String,
-    value: String,
-    valueColor: Color? = null,
-    onClick: (() -> Unit)? = null,
-) {
-    val c = LocalSleepColors.current
-    val resolvedValueColor = valueColor ?: c.textAccent
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
-            .padding(horizontal = 16.dp, vertical = 16.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(label, fontSize = 15.sp, color = c.textPrimary)
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(value, fontSize = 15.sp, color = resolvedValueColor, fontWeight = FontWeight.Medium)
-            if (onClick != null) {
-                Spacer(Modifier.width(4.dp))
-                Icon(
-                    Icons.Outlined.ChevronRight, null,
-                    tint = c.textSecondary,
-                    modifier = Modifier.height(18.dp).width(18.dp),
-                )
-            }
-        }
-    }
-}
-
-private fun shortFmt(): DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
