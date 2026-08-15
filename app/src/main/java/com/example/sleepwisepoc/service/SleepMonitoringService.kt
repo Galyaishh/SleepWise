@@ -31,6 +31,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -59,7 +60,16 @@ import java.time.ZoneId
  */
 class SleepMonitoringService : Service() {
 
-    private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+    // Background scope for prediction passes + IO. SELF-HEALING: if a partial
+    // service teardown ever cancels it, recreate it on next use. A cancelled scope
+    // silently drops every launch{}, which froze the model for an entire live
+    // session (data streamed in but zero prediction passes ran — 2026-08-15).
+    // Always launch through liveScope(), never `scope` directly.
+    @Volatile private var scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+    private fun liveScope(): CoroutineScope {
+        if (!scope.isActive) scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+        return scope
+    }
     private var predictor: TFLiteSleepPredictor? = null
     private var healthManager: SamsungHealthManager? = null
     @Volatile private var alarmFired = false
@@ -117,7 +127,7 @@ class SleepMonitoringService : Service() {
         // Doze-proof backstop TICK (action ACTION_TICK, no extras).
         if (intent?.action == AlarmReceiver.ACTION_TICK) {
             SessionLog.log(this, "onStartCommand TICK (backstop)")
-            scope.launch {
+            liveScope().launch {
                 // If the service was restarted by the OS with no active context
                 // (e.g. after an OS kill with no START_REDELIVER_INTENT pending),
                 // try to restore session state from Room before running a pass.
@@ -191,7 +201,7 @@ class SleepMonitoringService : Service() {
         // Room lookup + session restore/create runs OFF the main thread (was a
         // main-thread runBlocking → ANR risk). Ordered so the initial prediction
         // pass only runs once state is restored/created.
-        scope.launch {
+        liveScope().launch {
             // Check Room for an existing PENDING session with the same window:
             //   1. OS kill + START_REDELIVER_INTENT — same intent replayed after process death.
             //   2. BootReceiver restart — device rebooted mid-session.
@@ -244,7 +254,7 @@ class SleepMonitoringService : Service() {
 
     /** Called by WearMessageListener whenever a fresh HR batch lands. */
     fun onWearDataArrived(label: String) {
-        scope.launch { runPredictionPass(source = "wear:$label") }
+        liveScope().launch { runPredictionPass(source = "wear:$label") }
     }
 
     private fun scheduleBackstopTick() {
@@ -311,7 +321,7 @@ class SleepMonitoringService : Service() {
                     val id = localSessionId
                     if (id > 0L) {
                         val json = gson.toJson(tickHistory.toList())
-                        scope.launch { dao.updateStages(id, json) }
+                        liveScope().launch { dao.updateStages(id, json) }
                     }
                     // Per-epoch line so backfilled minutes are all visible in the
                     // log (a morning burst can backfill 60+ epochs — the pass
@@ -376,9 +386,13 @@ class SleepMonitoringService : Service() {
     private suspend fun buildNewEpochsFromRealData(sinceMs: Long): List<RealEpoch> {
         // Pull a generous backlog so a 5-6 min burst is fully covered.
         val wearSamples = WearHrSource.recentHr(minutesBack = 15)
-        val healthSamples = try {
-            healthManager?.readHeartRate(hoursBack = 1) ?: emptyList()
-        } catch (_: Throwable) { emptyList() }
+        // Samsung Health is only a FALLBACK for nights without the wear companion.
+        // When the watch is streaming, skip the (potentially blocking) SDK read —
+        // a hung readHeartRate inside the mutex-held pass could stall every
+        // subsequent prediction for the whole session.
+        val healthSamples = if (wearSamples.isEmpty()) {
+            try { healthManager?.readHeartRate(hoursBack = 1) ?: emptyList() } catch (_: Throwable) { emptyList() }
+        } else emptyList()
         // Dedup by second-truncated timestamp; wear samples come first so
         // they win ties (they're the real-time source).
         val merged = (wearSamples + healthSamples)
