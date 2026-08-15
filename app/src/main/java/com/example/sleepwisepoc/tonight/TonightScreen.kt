@@ -13,6 +13,8 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -139,11 +141,15 @@ fun TonightScreen(
 
     Box(modifier = modifier.fillMaxSize().background(c.bg)) {
 
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 26.dp),
-        ) {
+        Column(modifier = Modifier.fillMaxSize()) {
+
+          // Top — scrollable so the tall hero never pushes the actions off-screen.
+          Column(
+              modifier = Modifier
+                  .weight(1f)
+                  .verticalScroll(rememberScrollState())
+                  .padding(horizontal = 26.dp),
+          ) {
             Spacer(Modifier.height(18.dp))
 
             // ── Eyebrow / date ────────────────────────────────────────────────
@@ -186,10 +192,11 @@ fun TonightScreen(
             // ── Tonight's shape (ghost forecast ribbon) ───────────────────────
             TonightShape()
 
-            // Push the status cluster to the bottom (margin-top: auto).
-            Spacer(Modifier.weight(1f))
             Spacer(Modifier.height(26.dp))
+          }
 
+          // Bottom — pinned action cluster, always visible above the nav bar.
+          Column(modifier = Modifier.padding(horizontal = 26.dp)) {
             // ── Status card ───────────────────────────────────────────────────
             StatusCard(
                 home = home,
@@ -239,6 +246,7 @@ fun TonightScreen(
             }
 
             Spacer(Modifier.height(26.dp))
+          }
         }
 
         // ── No-watch bottom sheet overlay ─────────────────────────────────────
