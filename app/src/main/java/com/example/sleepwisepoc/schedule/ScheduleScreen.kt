@@ -5,6 +5,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -156,7 +157,13 @@ fun ScheduleScreen(
         Spacer(Modifier.height(26.dp))
 
         // ── Day row (Sunday-first) ─────────────────────────────────────────────
-        DayRow(schedule, sel) { d ->
+        // Tap = toggle in/out of the selection. Long-press = focus JUST that day
+        // (deselect the rest and load its saved time into the picker).
+        DayRow(
+            schedule = schedule,
+            selected = sel,
+            onLongTap = { d -> selectedDays = setOf(d); edited = false },
+        ) { d ->
             val newSel = when {
                 d in sel && sel.size > 1 -> sel - d   // deselect (but never the last one)
                 d in sel                 -> sel        // last remaining day stays selected
@@ -271,8 +278,14 @@ fun ScheduleScreen(
 
 // ─── Day row ──────────────────────────────────────────────────────────────────
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun DayRow(schedule: SleepSchedule, selected: Set<Int>, onTap: (Int) -> Unit) {
+private fun DayRow(
+    schedule: SleepSchedule,
+    selected: Set<Int>,
+    onLongTap: (Int) -> Unit,
+    onTap: (Int) -> Unit,
+) {
     val c = LocalSleepColors.current
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -291,7 +304,7 @@ private fun DayRow(schedule: SleepSchedule, selected: Set<Int>, onTap: (Int) -> 
                     .heightIn(min = 74.dp)
                     .clip(RoundedCornerShape(18.dp))
                     .background(if (isSel) c.accent else c.surface)
-                    .clickable { onTap(i) }
+                    .combinedClickable(onClick = { onTap(i) }, onLongClick = { onLongTap(i) })
                     .padding(vertical = 12.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center,
