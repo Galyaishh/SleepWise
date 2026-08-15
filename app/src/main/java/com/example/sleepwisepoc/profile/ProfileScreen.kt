@@ -3,6 +3,7 @@ package com.example.sleepwisepoc.profile
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
+import android.widget.Toast
 import androidx.compose.runtime.LaunchedEffect
 import com.google.android.gms.wearable.Wearable
 import kotlinx.coroutines.tasks.await
@@ -149,13 +150,15 @@ fun ProfileScreen(
             dismissButton = {
                 TextButton(onClick = {
                     showConnectDialog = false
-                    val marketUri = Uri.parse("market://details?id=${context.packageName}")
-                    val webUri = Uri.parse("https://play.google.com/store/apps/details?id=${context.packageName}")
-                    try {
-                        context.startActivity(Intent(Intent.ACTION_VIEW, marketUri))
-                    } catch (_: Exception) {
-                        context.startActivity(Intent(Intent.ACTION_VIEW, webUri))
-                    }
+                    // The watch companion isn't on the Play Store yet, so a market://
+                    // link would dead-end on "item not found". Until it's published,
+                    // show a friendly note instead. (When published, restore the
+                    // market://details?id=<package> intent here for one-tap install.)
+                    Toast.makeText(
+                        context,
+                        "The watch app is coming to the Play Store. For now it's installed directly from Android Studio.",
+                        Toast.LENGTH_LONG,
+                    ).show()
                 }) {
                     Text("Install SleepWise on watch", color = c.textSecondary)
                 }
