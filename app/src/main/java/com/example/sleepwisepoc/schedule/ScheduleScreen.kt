@@ -30,6 +30,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -163,18 +164,21 @@ fun ScheduleScreen(
         Spacer(Modifier.height(26.dp))
 
         // ── Time-picker well ───────────────────────────────────────────────────
-        TimePickerWell(
-            hour   = repDay.wakeTime.hour,
-            minute = repDay.wakeTime.minute,
-            onHour = { h ->
-                val t = LocalTime.of(h, repDay.wakeTime.minute)
-                sel.forEach { viewModel.saveDay(it, schedule[it].copy(wakeTime = t, smartAlarm = true)) }
-            },
-            onMinute = { m ->
-                val t = LocalTime.of(repDay.wakeTime.hour, m)
-                sel.forEach { viewModel.saveDay(it, schedule[it].copy(wakeTime = t, smartAlarm = true)) }
-            },
-        )
+        // key() on the day selection (NOT the time) so the columns seed once per
+        // editing session and re-seed only when you switch days — scrolling the hour
+        // no longer resets the minute column, and vice-versa.
+        key(sel.sorted().joinToString(",")) {
+            TimePickerWell(
+                hour   = repDay.wakeTime.hour,
+                minute = repDay.wakeTime.minute,
+                onHour = { h ->
+                    sel.forEach { viewModel.saveDay(it, schedule[it].copy(wakeTime = LocalTime.of(h, schedule[it].wakeTime.minute), smartAlarm = true)) }
+                },
+                onMinute = { m ->
+                    sel.forEach { viewModel.saveDay(it, schedule[it].copy(wakeTime = LocalTime.of(schedule[it].wakeTime.hour, m), smartAlarm = true)) }
+                },
+            )
+        }
 
         Spacer(Modifier.height(26.dp))
 
@@ -323,7 +327,10 @@ private fun ScrollPickerColumn(
 ) {
     val c = LocalSleepColors.current
     val itemHeightPx = with(LocalDensity.current) { 44.dp.toPx() }
-    val listState = rememberLazyListState()
+    // Seed the scroll position to the current value ONCE (this composable is
+    // key()'d on the day selection upstream, so it re-seeds when the day changes).
+    // No LaunchedEffect re-centering — that's what made the two columns fight.
+    val listState = rememberLazyListState(initialFirstVisibleItemIndex = selectedIndex)
     val fling = rememberSnapFlingBehavior(lazyListState = listState)
 
     // Which item sits in the center band right now.
@@ -335,13 +342,7 @@ private fun ScrollPickerColumn(
         }
     }
 
-    // Center the current value on mount and whenever the value changes externally
-    // (e.g. switching the selected day). Never fights an in-progress user drag.
-    LaunchedEffect(selectedIndex) {
-        if (!listState.isScrollInProgress) listState.scrollToItem(selectedIndex)
-    }
-
-    // Commit once the scroll settles.
+    // Commit once the scroll settles (and only when it actually changed).
     LaunchedEffect(listState) {
         snapshotFlow { listState.isScrollInProgress }.collect { scrolling ->
             if (!scrolling && centered != selectedIndex) onSelected(centered)
