@@ -10,8 +10,11 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Bedtime
 import androidx.compose.material.icons.outlined.CalendarMonth
@@ -139,6 +142,12 @@ private fun MainScaffold(onSignOut: () -> Unit = {}, onToggleTheme: () -> Unit =
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         containerColor = c.bg,
+        // We handle window insets explicitly: the nav bar consumes the bottom
+        // (navigation-bar) inset itself, and the content Box adds the status-bar
+        // inset at the top. This keeps the nav above the Android system bar AND
+        // insets screen content by the full nav-bar height (so e.g. Tonight's
+        // "Start" button is never covered).
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         bottomBar = {
             SleepWiseNavBar(
                 selectedTab   = selectedTab,
@@ -147,12 +156,14 @@ private fun MainScaffold(onSignOut: () -> Unit = {}, onToggleTheme: () -> Unit =
             )
         },
     ) { innerPadding ->
-        when (selectedTab) {
-            0 -> TonightScreen(modifier = Modifier.padding(innerPadding))
-            1 -> SleepReportScreen(modifier = Modifier.padding(innerPadding))
-            2 -> ScheduleScreen(modifier = Modifier.padding(innerPadding))
-            3 -> ProfileScreen(modifier = Modifier.padding(innerPadding), onSignOut = onSignOut, onToggleTheme = onToggleTheme)
-            4 -> DemoScreen(context = context, predictor = demoPredictor, onBack = { selectedTab = 0 })
+        Box(Modifier.fillMaxSize().padding(innerPadding).statusBarsPadding()) {
+            when (selectedTab) {
+                0 -> TonightScreen(modifier = Modifier.fillMaxSize())
+                1 -> ScheduleScreen(modifier = Modifier.fillMaxSize())
+                2 -> SleepReportScreen(modifier = Modifier.fillMaxSize())
+                3 -> ProfileScreen(modifier = Modifier.fillMaxSize(), onSignOut = onSignOut, onToggleTheme = onToggleTheme)
+                4 -> DemoScreen(context = context, predictor = demoPredictor, onBack = { selectedTab = 0 })
+            }
         }
     }
 }
@@ -168,35 +179,20 @@ private fun isEmulatorBuild(): Boolean =
 
 @Composable
 private fun SleepWiseNavBar(selectedTab: Int, onTabSelected: (Int) -> Unit, showDemo: Boolean = false) {
-    val c = LocalSleepColors.current
-    NavigationBar(
-        containerColor = c.surface,
-        tonalElevation = 0.dp,
-    ) {
-        data class NavItem(val label: String, val icon: androidx.compose.ui.graphics.vector.ImageVector)
-        val items = buildList {
-            add(NavItem("Tonight",  Icons.Outlined.Home))
-            add(NavItem("Sleep",    Icons.Outlined.Bedtime))
-            add(NavItem("Schedule", Icons.Outlined.CalendarMonth))
-            add(NavItem("Profile",  Icons.Outlined.Person))
-            if (showDemo) add(NavItem("Demo", Icons.Outlined.Science))
-        }
-        items.forEachIndexed { index, item ->
-            NavigationBarItem(
-                selected        = selectedTab == index,
-                onClick         = { onTabSelected(index) },
-                icon            = { Icon(item.icon, contentDescription = item.label) },
-                label           = { Text(item.label) },
-                alwaysShowLabel = true,
-                colors          = NavigationBarItemDefaults.colors(
-                    selectedIconColor   = c.primary,
-                    selectedTextColor   = c.primary,
-                    unselectedIconColor = c.textSecondary,
-                    unselectedTextColor = c.textSecondary,
-                    indicatorColor      = c.surface,
-                ),
-            )
-        }
+    // Nightfold bottom nav: icon-free, type + a 22×2 accent indicator. Order:
+    // Tonight · Schedule · Report · You (+ emulator-only Demo).
+    val items = buildList {
+        add(com.example.sleepwisepoc.ui.theme.NavItem("tonight", "Tonight"))
+        add(com.example.sleepwisepoc.ui.theme.NavItem("schedule", "Schedule"))
+        add(com.example.sleepwisepoc.ui.theme.NavItem("report", "Report"))
+        add(com.example.sleepwisepoc.ui.theme.NavItem("you", "You"))
+        if (showDemo) add(com.example.sleepwisepoc.ui.theme.NavItem("demo", "Demo"))
     }
+    val selectedKey = items.getOrNull(selectedTab)?.key ?: "tonight"
+    com.example.sleepwisepoc.ui.theme.NfBottomNav(
+        items = items,
+        selected = selectedKey,
+        onSelect = { key -> onTabSelected(items.indexOfFirst { it.key == key }.coerceAtLeast(0)) },
+    )
 }
 

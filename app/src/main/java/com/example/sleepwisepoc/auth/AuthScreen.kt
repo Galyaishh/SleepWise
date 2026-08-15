@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.util.Log
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -17,13 +18,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -36,14 +37,20 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusDirection
-import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -52,7 +59,12 @@ import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.sleepwisepoc.R
+import com.example.sleepwisepoc.ui.theme.Eyebrow
+import com.example.sleepwisepoc.ui.theme.InstrumentSerif
 import com.example.sleepwisepoc.ui.theme.LocalSleepColors
+import com.example.sleepwisepoc.ui.theme.PlexMono
+import com.example.sleepwisepoc.ui.theme.PlexSans
+import com.example.sleepwisepoc.ui.theme.PrimaryButton
 import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import kotlinx.coroutines.launch
@@ -61,7 +73,6 @@ import kotlinx.coroutines.launch
 fun AuthScreen(viewModel: AuthViewModel = viewModel()) {
     val c = LocalSleepColors.current
     val state by viewModel.state.collectAsState()
-    var showEmailForm by remember { mutableStateOf(false) }
     var isSignUp by remember { mutableStateOf(false) }
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
@@ -69,6 +80,13 @@ fun AuthScreen(viewModel: AuthViewModel = viewModel()) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val credentialManager = remember(context) { CredentialManager.create(context) }
+
+    val submitEmail: () -> Unit = {
+        if (email.isNotBlank() && password.isNotBlank()) {
+            if (isSignUp) viewModel.signUpWithEmail(email, password)
+            else viewModel.signInWithEmail(email, password)
+        }
+    }
 
     val onGoogleClick: () -> Unit = {
         if (!hasInternet(context)) {
@@ -116,201 +134,139 @@ fun AuthScreen(viewModel: AuthViewModel = viewModel()) {
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(
-                Brush.verticalGradient(
-                    colorStops = arrayOf(
-                        0f to Color(0xFF0D0F22),
-                        0.45f to c.bg,
-                        1f to c.bg,
-                    )
-                )
-            )
+            .background(c.bg)
     ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 32.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 26.dp),
         ) {
             Spacer(Modifier.height(72.dp))
 
-            // Logo
-            Text("🌙", fontSize = 56.sp)
-            Spacer(Modifier.height(20.dp))
+            Eyebrow("SleepWise · Wake up well")
+            Spacer(Modifier.height(26.dp))
+
+            // Heading + lede
             Text(
-                "SleepWise",
-                fontSize = 32.sp,
-                fontWeight = FontWeight.Bold,
-                color = c.textPrimary,
-                letterSpacing = (-0.5).sp,
+                text = if (isSignUp) "Create an account" else "Welcome back",
+                fontFamily = InstrumentSerif,
+                fontSize = 40.sp,
+                lineHeight = 44.sp,
+                color = c.text,
             )
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(10.dp))
             Text(
-                "Your intelligent sleep companion",
+                text = "Your nights are stored on your device.",
+                fontFamily = PlexSans,
                 fontSize = 15.sp,
-                color = c.textSecondary,
-                textAlign = TextAlign.Center,
+                lineHeight = 23.sp,
+                color = c.dim,
             )
 
-            Spacer(Modifier.weight(1f))
+            Spacer(Modifier.height(34.dp))
 
-            if (state.isLoading) {
-                CircularProgressIndicator(color = c.primary, modifier = Modifier.size(40.dp))
-            } else if (!showEmailForm) {
-                // Google button
-                AuthButton(
-                    onClick = onGoogleClick,
-                    isPrimary = true,
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    ) {
-                        Text("G", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = c.textPrimary)
-                        Text(
-                            "Continue with Google",
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = c.textPrimary,
-                        )
-                    }
-                }
+            // Email + password fields
+            NfField(
+                label = "Email",
+                value = email,
+                onValueChange = { email = it },
+                placeholder = "you@example.com",
+                keyboardType = KeyboardType.Email,
+                imeAction = ImeAction.Next,
+                onImeAction = { focusManager.moveFocus(FocusDirection.Down) },
+            )
+            Spacer(Modifier.height(18.dp))
+            NfField(
+                label = "Password",
+                value = password,
+                onValueChange = { password = it },
+                placeholder = if (isSignUp) "At least 6 characters" else "Your password",
+                keyboardType = KeyboardType.Password,
+                imeAction = ImeAction.Done,
+                isPassword = true,
+                onImeAction = {
+                    focusManager.clearFocus()
+                    submitEmail()
+                },
+            )
 
-                Spacer(Modifier.height(12.dp))
-
-                // Divider
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    HorizontalDivider(modifier = Modifier.weight(1f), color = c.border)
-                    Text("or", fontSize = 13.sp, color = c.textSecondary)
-                    HorizontalDivider(modifier = Modifier.weight(1f), color = c.border)
-                }
-
-                Spacer(Modifier.height(12.dp))
-
-                // Email button
-                AuthButton(
-                    onClick = { showEmailForm = true },
-                    isPrimary = false,
-                ) {
-                    Text(
-                        "Continue with Email",
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = c.textPrimary,
-                    )
-                }
-            } else {
-                // Email form
-                Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text(
-                        text = if (isSignUp) "Create Account" else "Sign In",
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = c.textPrimary,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-
-                    SleepTextField(
-                        value = email,
-                        onValueChange = { email = it },
-                        placeholder = "Email address",
-                        keyboardType = KeyboardType.Email,
-                        imeAction = ImeAction.Next,
-                        onImeAction = { focusManager.moveFocus(FocusDirection.Down) },
-                    )
-                    SleepTextField(
-                        value = password,
-                        onValueChange = { password = it },
-                        placeholder = if (isSignUp) "Password (min 6 characters)" else "Password",
-                        keyboardType = KeyboardType.Password,
-                        imeAction = ImeAction.Done,
-                        isPassword = true,
-                        onImeAction = {
-                            focusManager.clearFocus()
-                            if (email.isNotBlank() && password.isNotBlank()) {
-                                if (isSignUp) viewModel.signUpWithEmail(email, password)
-                                else viewModel.signInWithEmail(email, password)
-                            }
-                        },
-                    )
-
-                    AuthButton(
-                        onClick = {
-                            if (email.isNotBlank() && password.isNotBlank()) {
-                                if (isSignUp) viewModel.signUpWithEmail(email, password)
-                                else viewModel.signInWithEmail(email, password)
-                            }
-                        },
-                        isPrimary = true,
-                    ) {
-                        Text(
-                            if (isSignUp) "Create Account" else "Sign In",
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = c.textPrimary,
-                        )
-                    }
-
-                    Text(
-                        text = if (isSignUp) "Already have an account? Sign In" else "New here? Create account",
-                        fontSize = 14.sp,
-                        color = c.primary,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                isSignUp = !isSignUp
-                                viewModel.clearError()
-                            }
-                            .padding(vertical = 4.dp),
-                    )
-
-                    Text(
-                        text = "← Back",
-                        fontSize = 14.sp,
-                        color = c.textSecondary,
-                        modifier = Modifier
-                            .clickable {
-                                showEmailForm = false
-                                isSignUp = false
-                                viewModel.clearError()
-                            }
-                            .padding(vertical = 4.dp),
-                    )
-                }
-            }
-
+            // Error notice
             state.error?.let { errorText ->
-                Spacer(Modifier.height(20.dp))
-                Text(
-                    text = errorText,
-                    fontSize = 13.sp,
-                    color = Color(0xFFFF6B6B),
-                    textAlign = TextAlign.Center,
-                    lineHeight = 18.sp,
+                Spacer(Modifier.height(18.dp))
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(Color(0xFFFF6B6B).copy(alpha = 0.1f))
-                        .border(1.dp, Color(0xFFFF6B6B).copy(alpha = 0.4f), RoundedCornerShape(12.dp))
-                        .padding(12.dp),
-                )
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(c.accentSoft)
+                        .border(1.dp, c.accent, RoundedCornerShape(16.dp))
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                ) {
+                    Text(
+                        text = errorText,
+                        fontFamily = PlexSans,
+                        fontSize = 13.sp,
+                        lineHeight = 19.sp,
+                        color = c.accent,
+                    )
+                }
             }
 
-            Spacer(Modifier.height(40.dp))
+            Spacer(Modifier.height(26.dp))
 
-            Text(
-                text = "Your sleep data belongs to you.\nWe never share or sell it.",
-                fontSize = 12.sp,
-                color = c.textSecondary.copy(alpha = 0.6f),
-                textAlign = TextAlign.Center,
-                lineHeight = 18.sp,
-            )
+            // Primary action / loading
+            if (state.isLoading) {
+                Box(
+                    modifier = Modifier.fillMaxWidth().height(64.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    CircularProgressIndicator(color = c.accent, modifier = Modifier.size(30.dp))
+                }
+            } else {
+                PrimaryButton(
+                    text = if (isSignUp) "Create account" else "Sign in",
+                    onClick = submitEmail,
+                    enabled = email.isNotBlank() && password.isNotBlank(),
+                )
+
+                Spacer(Modifier.height(22.dp))
+
+                OrDivider()
+
+                Spacer(Modifier.height(22.dp))
+
+                GoogleButton(onClick = onGoogleClick)
+            }
+
+            Spacer(Modifier.height(34.dp))
+
+            // Footer link — toggles between sign-in and create-account
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = if (isSignUp) "Already have an account?" else "New here?",
+                    fontFamily = PlexSans,
+                    fontSize = 14.sp,
+                    color = c.dim,
+                )
+                Text(
+                    text = if (isSignUp) "Sign in" else "Create an account",
+                    fontFamily = PlexSans,
+                    fontWeight = FontWeight.Medium,
+                    fontSize = 14.sp,
+                    color = c.accent,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .clickable {
+                            isSignUp = !isSignUp
+                            viewModel.clearError()
+                        }
+                        .padding(start = 6.dp, top = 6.dp, bottom = 6.dp),
+                )
+            }
 
             Spacer(Modifier.height(32.dp))
         }
@@ -325,31 +281,91 @@ private fun hasInternet(context: Context): Boolean {
             caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
 }
 
+// ─── "or" divider: hairline / faint 12sp / hairline ────────────────────────────
 @Composable
-private fun AuthButton(
-    onClick: () -> Unit,
-    isPrimary: Boolean,
-    content: @Composable () -> Unit,
-) {
+private fun OrDivider() {
+    val c = LocalSleepColors.current
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        Box(Modifier.weight(1f).height(1.dp).background(c.line))
+        Text("or", fontFamily = PlexSans, fontSize = 12.sp, color = c.faint)
+        Box(Modifier.weight(1f).height(1.dp).background(c.line))
+    }
+}
+
+// ─── Secondary "Continue with Google" button (SecondaryButton metrics + mark) ───
+@Composable
+private fun GoogleButton(onClick: () -> Unit) {
     val c = LocalSleepColors.current
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(58.dp)
-            .clip(RoundedCornerShape(50))
-            .then(
-                if (isPrimary) Modifier.background(Brush.horizontalGradient(listOf(c.primary, c.primaryEnd)))
-                else Modifier.background(c.surface).border(1.dp, c.border, RoundedCornerShape(50))
-            )
+            .height(56.dp)
+            .clip(RoundedCornerShape(20.dp))
+            .border(1.dp, c.lineStrong, RoundedCornerShape(20.dp))
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        content()
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            GoogleMark(Modifier.size(20.dp))
+            Text(
+                "Continue with Google",
+                fontFamily = PlexSans,
+                fontWeight = FontWeight.Medium,
+                fontSize = 16.sp,
+                color = c.text,
+            )
+        }
     }
 }
 
+/** Four-color Google "G", drawn from primitives — a ring split into four arcs
+ *  (blue right, red top, yellow left, green bottom) with a blue crossbar. */
 @Composable
-private fun SleepTextField(
+private fun GoogleMark(modifier: Modifier = Modifier) {
+    val blue = Color(0xFF4285F4)
+    val red = Color(0xFFEA4335)
+    val yellow = Color(0xFFFBBC05)
+    val green = Color(0xFF34A853)
+    Canvas(modifier) {
+        val sw = size.minDimension * 0.24f
+        val inset = sw / 2f
+        val arcSize = Size(size.width - sw, size.height - sw)
+        val topLeft = Offset(inset, inset)
+        fun ring(color: Color, start: Float, sweep: Float) = drawArc(
+            color = color,
+            startAngle = start,
+            sweepAngle = sweep,
+            useCenter = false,
+            topLeft = topLeft,
+            size = arcSize,
+            style = Stroke(width = sw, cap = StrokeCap.Butt),
+        )
+        // 0° = 3 o'clock; negative sweeps go counter-clockwise (upward).
+        // Ring leaves a gap on the right where the crossbar enters.
+        ring(blue, -12f, -78f)    // right → top-right
+        ring(red, -90f, -78f)     // top → upper-left
+        ring(yellow, -168f, -78f) // left → lower-left
+        ring(green, -246f, -78f)  // bottom → lower-right
+        // Blue crossbar: from centre out to the right edge, at the vertical middle.
+        drawRect(
+            color = blue,
+            topLeft = Offset(size.width * 0.5f, size.height / 2f - sw / 2f),
+            size = Size(size.width * 0.5f - inset, sw),
+        )
+    }
+}
+
+// ─── Styled field: mono micro label + surface BasicTextField (radius 16) ───────
+@Composable
+private fun NfField(
+    label: String,
     value: String,
     onValueChange: (String) -> Unit,
     placeholder: String,
@@ -359,24 +375,46 @@ private fun SleepTextField(
     onImeAction: () -> Unit = {},
 ) {
     val c = LocalSleepColors.current
-    OutlinedTextField(
-        value = value,
-        onValueChange = onValueChange,
-        placeholder = { Text(placeholder, color = c.textSecondary) },
-        singleLine = true,
-        visualTransformation = if (isPassword) PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,
-        keyboardOptions = KeyboardOptions(keyboardType = keyboardType, imeAction = imeAction),
-        keyboardActions = KeyboardActions(onAny = { onImeAction() }),
-        shape = RoundedCornerShape(16.dp),
-        colors = OutlinedTextFieldDefaults.colors(
-            focusedBorderColor = c.primary,
-            unfocusedBorderColor = c.border,
-            focusedTextColor = c.textPrimary,
-            unfocusedTextColor = c.textPrimary,
-            cursorColor = c.primary,
-            focusedContainerColor = c.surface2,
-            unfocusedContainerColor = c.surface,
-        ),
-        modifier = Modifier.fillMaxWidth(),
-    )
+    Column(Modifier.fillMaxWidth()) {
+        Text(
+            text = label.uppercase(),
+            fontFamily = PlexMono,
+            fontSize = 10.sp,
+            letterSpacing = 1.6.sp,
+            color = c.faint,
+        )
+        Spacer(Modifier.height(8.dp))
+        BasicTextField(
+            value = value,
+            onValueChange = onValueChange,
+            singleLine = true,
+            textStyle = TextStyle(fontFamily = PlexSans, fontSize = 16.sp, color = c.text),
+            cursorBrush = SolidColor(c.accent),
+            visualTransformation = if (isPassword) PasswordVisualTransformation() else VisualTransformation.None,
+            keyboardOptions = KeyboardOptions(keyboardType = keyboardType, imeAction = imeAction),
+            keyboardActions = KeyboardActions(onAny = { onImeAction() }),
+            modifier = Modifier.fillMaxWidth(),
+            decorationBox = { inner ->
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(c.surface)
+                        .border(1.dp, c.lineStrong, RoundedCornerShape(16.dp))
+                        .padding(horizontal = 18.dp, vertical = 17.dp),
+                    contentAlignment = Alignment.CenterStart,
+                ) {
+                    if (value.isEmpty()) {
+                        Text(
+                            text = placeholder,
+                            fontFamily = PlexSans,
+                            fontSize = 16.sp,
+                            color = c.faint,
+                        )
+                    }
+                    inner()
+                }
+            },
+        )
+    }
 }
