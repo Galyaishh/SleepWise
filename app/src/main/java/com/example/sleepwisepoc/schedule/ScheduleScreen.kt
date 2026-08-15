@@ -350,19 +350,22 @@ private fun ScrollPickerColumn(
     modifier: Modifier = Modifier,
 ) {
     val c = LocalSleepColors.current
-    val itemHeightPx = with(LocalDensity.current) { 44.dp.toPx() }
     // Seed the scroll position to the current value ONCE (this composable is
     // key()'d on the day selection upstream, so it re-seeds when the day changes).
-    // No LaunchedEffect re-centering — that's what made the two columns fight.
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = selectedIndex)
     val fling = rememberSnapFlingBehavior(lazyListState = listState)
 
-    // Which item sits in the center band right now.
+    // The centered item = the one whose center is nearest the viewport center,
+    // read precisely from layoutInfo. (The old firstVisibleIndex+offset heuristic
+    // could land one off after a snap, so the SAVED value didn't match what you saw.)
     val centered by remember {
         derivedStateOf {
-            (listState.firstVisibleItemIndex +
-                if (listState.firstVisibleItemScrollOffset > itemHeightPx / 2f) 1 else 0)
-                .coerceIn(0, count - 1)
+            val info = listState.layoutInfo
+            if (info.visibleItemsInfo.isEmpty()) selectedIndex
+            else {
+                val mid = (info.viewportStartOffset + info.viewportEndOffset) / 2f
+                info.visibleItemsInfo.minByOrNull { kotlin.math.abs((it.offset + it.size / 2f) - mid) }!!.index
+            }
         }
     }
 
