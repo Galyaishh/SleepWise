@@ -74,8 +74,8 @@ private val DAY_LETTERS = listOf("S", "M", "T", "W", "T", "F", "S")
 private val DAY_NAMES    = listOf("Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday")
 private val WINDOW_OPTIONS = listOf(10, 15, 20, 30, 45, 60)
 
-private val HmFmt    = DateTimeFormatter.ofPattern("HH:mm") // 08:00 — hints
-private val ShortFmt = DateTimeFormatter.ofPattern("h:mm")  // 6:45 — cells & range
+private val HmFmt    = DateTimeFormatter.ofPattern("HH:mm") // 08:00 — hints (24h)
+private val ShortFmt = DateTimeFormatter.ofPattern("H:mm")  // 6:45 / 18:45 — cells & range (24h)
 
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
@@ -93,13 +93,34 @@ fun ScheduleScreen(
     var selectedDays by remember { mutableStateOf(setOf(0)) }
     val sel = selectedDays.ifEmpty { setOf(0) }
 
-    val repDay   = schedule[sel.min()]              // representative values for the pickers
-    val allOn    = sel.all { schedule[it].smartAlarm }
-    val anyOff   = sel.any { !schedule[it].smartAlarm }
-    val sameTime = sel.map { schedule[it].wakeTime }.distinct().size == 1
+    // The picker edits a DRAFT (hour/minute/window). The draft applies to ALL
+    // selected days — on every edit AND on Save — so "set a time, add a day, save"
+    // gives every selected day that time. The draft loads from a day only when you
+    // view a single day and haven't edited it yet (covers the async load + day
+    // switches); adding days keeps the current draft and syncs the new day to it.
+    var draftHour by remember { mutableStateOf(7) }
+    var draftMinute by remember { mutableStateOf(0) }
+    var draftWindow by remember { mutableStateOf(30) }
+    var pickerKey by remember { mutableStateOf(0) }
+    var edited by remember { mutableStateOf(false) }
 
-    fun editAll(transform: (DaySchedule) -> DaySchedule) {
-        sel.forEach { d -> viewModel.saveDay(d, transform(schedule[d])) }
+    val draftTime = LocalTime.of(draftHour, draftMinute)
+    val allOn = sel.all { schedule[it].smartAlarm }
+
+    fun applyDraftTo(target: Set<Int>) {
+        val t = LocalTime.of(draftHour, draftMinute)
+        target.forEach { viewModel.saveDay(it, schedule[it].copy(wakeTime = t, windowMinutes = draftWindow, smartAlarm = true)) }
+    }
+
+    // Load the representative day into the draft while viewing a single unedited day.
+    LaunchedEffect(sel, schedule) {
+        if (sel.size == 1 && !edited) {
+            val d = schedule[sel.first()]
+            if (d.wakeTime.hour != draftHour || d.wakeTime.minute != draftMinute || d.windowMinutes != draftWindow) {
+                draftHour = d.wakeTime.hour; draftMinute = d.wakeTime.minute; draftWindow = d.windowMinutes
+                pickerKey++
+            }
+        }
     }
 
     Column(
@@ -127,10 +148,16 @@ fun ScheduleScreen(
 
         // ── Day row (Sunday-first) ─────────────────────────────────────────────
         DayRow(schedule, sel) { d ->
-            selectedDays = when {
+            val newSel = when {
                 d in sel && sel.size > 1 -> sel - d   // deselect (but never the last one)
                 d in sel                 -> sel        // last remaining day stays selected
-                else                     -> sel + d
+                else                     -> sel + d    // add a day
+            }
+            selectedDays = newSel
+            if (newSel.size == 1) {
+                edited = false                         // viewing one day → load its time
+            } else {
+                applyDraftTo(newSel)                   // multi-select → sync every day to the draft
             }
         }
 
@@ -149,42 +176,34 @@ fun ScheduleScreen(
                 )
                 Spacer(Modifier.height(3.dp))
                 Text(
-                    when {
-                        anyOff    -> "Some days are off"
-                        !sameTime -> "Different times — pick one to set them all"
-                        else      -> "Alarm on at ${repDay.wakeTime.format(HmFmt)}"
-                    },
+                    if (!allOn) "Some days are off" else "Alarm on at ${draftTime.format(HmFmt)}",
                     fontFamily = PlexSans, fontSize = 13.sp, lineHeight = 18.sp, color = c.dim,
                 )
             }
             Spacer(Modifier.width(12.dp))
-            NfToggle(checked = allOn, onCheckedChange = { v -> editAll { it.copy(smartAlarm = v) } })
+            NfToggle(checked = allOn, onCheckedChange = { v -> sel.forEach { viewModel.saveDay(it, schedule[it].copy(smartAlarm = v)) } })
         }
 
         Spacer(Modifier.height(26.dp))
 
         // ── Time-picker well ───────────────────────────────────────────────────
-        // key() on the day selection (NOT the time) so the columns seed once per
-        // editing session and re-seed only when you switch days — scrolling the hour
-        // no longer resets the minute column, and vice-versa.
-        key(sel.sorted().joinToString(",")) {
+        // key(pickerKey) re-seeds the columns only when a new day is loaded — NOT
+        // when the time value changes — so scrolling the hour never resets the
+        // minute column. Every scroll updates the draft and applies it to all days.
+        key(pickerKey) {
             TimePickerWell(
-                hour   = repDay.wakeTime.hour,
-                minute = repDay.wakeTime.minute,
-                onHour = { h ->
-                    sel.forEach { viewModel.saveDay(it, schedule[it].copy(wakeTime = LocalTime.of(h, schedule[it].wakeTime.minute), smartAlarm = true)) }
-                },
-                onMinute = { m ->
-                    sel.forEach { viewModel.saveDay(it, schedule[it].copy(wakeTime = LocalTime.of(schedule[it].wakeTime.hour, m), smartAlarm = true)) }
-                },
+                hour   = draftHour,
+                minute = draftMinute,
+                onHour = { h -> draftHour = h; edited = true; applyDraftTo(sel) },
+                onMinute = { m -> draftMinute = m; edited = true; applyDraftTo(sel) },
             )
         }
 
         Spacer(Modifier.height(26.dp))
 
         // ── Flexible window ────────────────────────────────────────────────────
-        val win   = repDay.windowMinutes
-        val wake  = repDay.wakeTime
+        val win   = draftWindow
+        val wake  = draftTime
         val start = wake.minusMinutes(win.toLong())
 
         Row(
@@ -217,7 +236,7 @@ fun ScheduleScreen(
                             else Modifier.border(1.dp, c.lineStrong, RoundedCornerShape(16.dp))
                         )
                         .clickable {
-                            sel.forEach { viewModel.saveDay(it, schedule[it].copy(windowMinutes = w, smartAlarm = true)) }
+                            draftWindow = w; edited = true; applyDraftTo(sel)
                         },
                     contentAlignment = Alignment.Center,
                 ) {
@@ -235,10 +254,10 @@ fun ScheduleScreen(
 
         Spacer(Modifier.height(26.dp))
 
-        // Edits already persist as you make them; this commits the current selection.
+        // Applies the current time + window to EVERY selected day.
         PrimaryButton(
             text = "Save schedule",
-            onClick = { sel.forEach { viewModel.saveDay(it, schedule[it]) } },
+            onClick = { applyDraftTo(sel) },
         )
 
         Spacer(Modifier.height(34.dp))

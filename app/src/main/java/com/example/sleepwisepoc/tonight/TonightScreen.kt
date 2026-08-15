@@ -52,7 +52,7 @@ import java.time.format.DateTimeFormatter
 //  Confirm tonight's alarm at a glance and start tracking.
 // ══════════════════════════════════════════════════════════════════════════════
 
-private val HeroFmt = DateTimeFormatter.ofPattern("h:mm")
+private val HeroFmt = DateTimeFormatter.ofPattern("H:mm")   // 24-hour
 private val ClockFmt = DateTimeFormatter.ofPattern("HH:mm")
 private val DateFmt = DateTimeFormatter.ofPattern("EEE d MMM")
 
