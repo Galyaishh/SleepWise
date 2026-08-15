@@ -93,34 +93,43 @@ fun ScheduleScreen(
     var selectedDays by remember { mutableStateOf(setOf(0)) }
     val sel = selectedDays.ifEmpty { setOf(0) }
 
-    // The picker edits a DRAFT (hour/minute/window). The draft applies to ALL
-    // selected days — on every edit AND on Save — so "set a time, add a day, save"
-    // gives every selected day that time. The draft loads from a day only when you
-    // view a single day and haven't edited it yet (covers the async load + day
-    // switches); adding days keeps the current draft and syncs the new day to it.
+    // NOTHING is persisted until "Save schedule". The picker edits a local DRAFT
+    // (time + window + on/off). The draft loads from a day when you focus a single
+    // day; with several days selected it stays put, and Save writes it to ALL of
+    // them at once. Day cells keep showing their SAVED values until you press Save.
     var draftHour by remember { mutableStateOf(7) }
     var draftMinute by remember { mutableStateOf(0) }
     var draftWindow by remember { mutableStateOf(30) }
+    var draftOn by remember { mutableStateOf(true) }
     var pickerKey by remember { mutableStateOf(0) }
     var edited by remember { mutableStateOf(false) }
 
     val draftTime = LocalTime.of(draftHour, draftMinute)
-    val allOn = sel.all { schedule[it].smartAlarm }
 
-    fun applyDraftTo(target: Set<Int>) {
+    fun saveDraftTo(target: Set<Int>) {
         val t = LocalTime.of(draftHour, draftMinute)
-        target.forEach { viewModel.saveDay(it, schedule[it].copy(wakeTime = t, windowMinutes = draftWindow, smartAlarm = true)) }
+        target.forEach { viewModel.saveDay(it, schedule[it].copy(wakeTime = t, windowMinutes = draftWindow, smartAlarm = draftOn)) }
     }
 
-    // Load the representative day into the draft while viewing a single unedited day.
+    // Load the focused single day into the draft (until the user edits it). Covers
+    // the initial async load and switching to a different single day.
     LaunchedEffect(sel, schedule) {
         if (sel.size == 1 && !edited) {
             val d = schedule[sel.first()]
-            if (d.wakeTime.hour != draftHour || d.wakeTime.minute != draftMinute || d.windowMinutes != draftWindow) {
-                draftHour = d.wakeTime.hour; draftMinute = d.wakeTime.minute; draftWindow = d.windowMinutes
+            if (d.wakeTime.hour != draftHour || d.wakeTime.minute != draftMinute ||
+                d.windowMinutes != draftWindow || d.smartAlarm != draftOn) {
+                draftHour = d.wakeTime.hour; draftMinute = d.wakeTime.minute
+                draftWindow = d.windowMinutes; draftOn = d.smartAlarm
                 pickerKey++
             }
         }
+    }
+
+    // The draft differs from a selected day's saved value → there are unsaved changes.
+    val dirty = sel.any {
+        val d = schedule[it]
+        d.wakeTime.hour != draftHour || d.wakeTime.minute != draftMinute ||
+            d.windowMinutes != draftWindow || d.smartAlarm != draftOn
     }
 
     Column(
@@ -154,11 +163,8 @@ fun ScheduleScreen(
                 else                     -> sel + d    // add a day
             }
             selectedDays = newSel
-            if (newSel.size == 1) {
-                edited = false                         // viewing one day → load its time
-            } else {
-                applyDraftTo(newSel)                   // multi-select → sync every day to the draft
-            }
+            if (newSel.size == 1) edited = false       // focus one day → load its saved time
+            // multi-select keeps the current draft; nothing is written until Save
         }
 
         Spacer(Modifier.height(20.dp))
@@ -171,17 +177,17 @@ fun ScheduleScreen(
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    if (sel.size == 1) DAY_NAMES[sel.first()] else "Editing ${sel.size} days together",
+                    if (sel.size == 1) DAY_NAMES[sel.first()] else "${sel.size} days selected",
                     fontFamily = PlexSans, fontWeight = FontWeight.Medium, fontSize = 15.sp, color = c.text,
                 )
                 Spacer(Modifier.height(3.dp))
                 Text(
-                    if (!allOn) "Some days are off" else "Alarm on at ${draftTime.format(HmFmt)}",
+                    if (!draftOn) "Alarm off" else "Wake at ${draftTime.format(HmFmt)}${if (dirty) " · unsaved" else ""}",
                     fontFamily = PlexSans, fontSize = 13.sp, lineHeight = 18.sp, color = c.dim,
                 )
             }
             Spacer(Modifier.width(12.dp))
-            NfToggle(checked = allOn, onCheckedChange = { v -> sel.forEach { viewModel.saveDay(it, schedule[it].copy(smartAlarm = v)) } })
+            NfToggle(checked = draftOn, onCheckedChange = { v -> draftOn = v; edited = true })
         }
 
         Spacer(Modifier.height(26.dp))
@@ -194,8 +200,8 @@ fun ScheduleScreen(
             TimePickerWell(
                 hour   = draftHour,
                 minute = draftMinute,
-                onHour = { h -> draftHour = h; edited = true; applyDraftTo(sel) },
-                onMinute = { m -> draftMinute = m; edited = true; applyDraftTo(sel) },
+                onHour = { h -> draftHour = h; edited = true },
+                onMinute = { m -> draftMinute = m; edited = true },
             )
         }
 
@@ -235,9 +241,7 @@ fun ScheduleScreen(
                             if (on) Modifier.background(c.accentSoft).border(1.dp, c.accent, RoundedCornerShape(16.dp))
                             else Modifier.border(1.dp, c.lineStrong, RoundedCornerShape(16.dp))
                         )
-                        .clickable {
-                            draftWindow = w; edited = true; applyDraftTo(sel)
-                        },
+                        .clickable { draftWindow = w; edited = true },
                     contentAlignment = Alignment.Center,
                 ) {
                     Text("$w", fontFamily = PlexSans, fontSize = 13.sp, color = if (on) c.accent else c.dim)
@@ -254,10 +258,11 @@ fun ScheduleScreen(
 
         Spacer(Modifier.height(26.dp))
 
-        // Applies the current time + window to EVERY selected day.
+        // Writes the draft (time + window + on/off) to EVERY selected day — nothing
+        // was persisted before this.
         PrimaryButton(
-            text = "Save schedule",
-            onClick = { applyDraftTo(sel) },
+            text = if (dirty) "Save schedule" else "Saved",
+            onClick = { saveDraftTo(sel); edited = false },
         )
 
         Spacer(Modifier.height(34.dp))
