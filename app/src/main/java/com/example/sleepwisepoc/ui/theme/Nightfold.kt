@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -257,10 +258,12 @@ data class NavItem(val key: String, val label: String)
 @Composable
 fun NfBottomNav(items: List<NavItem>, selected: String, onSelect: (String) -> Unit, modifier: Modifier = Modifier) {
     val c = LocalSleepColors.current
+    // The surface fills to the screen edge; the row is inset above the Android
+    // system navigation bar via navigationBarsPadding() so items never collide with it.
     Column(modifier = modifier.fillMaxWidth().background(c.surface)) {
         Box(Modifier.fillMaxWidth().height(1.dp).background(c.line))
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp).padding(bottom = 16.dp),
+            Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 14.dp, vertical = 10.dp),
             horizontalArrangement = Arrangement.spacedBy(0.dp),
         ) {
             items.forEach { item ->
