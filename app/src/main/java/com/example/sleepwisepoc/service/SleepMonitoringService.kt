@@ -522,10 +522,16 @@ class SleepMonitoringService : Service() {
             stages = tickHistory.toList(),
         )
 
+        // Persist the fire to the local row FIRST, so the in-app report shows the
+        // wake event even if the upload fails and the session waits as PENDING for
+        // retry. (Previously firedAt/firedReason went only into the upload payload,
+        // never the local entity — so the phone's own report read "never fired".)
+        val id = localSessionId
+        if (id > 0L) dao.markFired(id, firedAt.toString(), firedReason)
+
         try {
             val saved = ApiClient.api.uploadSession(payload)
             Log.d(TAG, "session uploaded id=${saved.id} ticks=${tickHistory.size} reason=$firedReason")
-            val id = localSessionId
             if (id > 0L) dao.markUploaded(id, Instant.now().toString())
         } catch (t: Throwable) {
             Log.w(TAG, "session upload failed: ${t.message} — kept as PENDING in Room for retry")

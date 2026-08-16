@@ -16,6 +16,9 @@ interface SleepSessionDao {
     @Query("UPDATE sleep_sessions SET uploadStatus = 'UPLOADED', endedAt = :endedAt WHERE id = :id")
     suspend fun markUploaded(id: Long, endedAt: String)
 
+    @Query("UPDATE sleep_sessions SET firedAt = :firedAt, firedReason = :firedReason WHERE id = :id")
+    suspend fun markFired(id: Long, firedAt: String, firedReason: String)
+
     @Query("SELECT * FROM sleep_sessions WHERE uploadStatus = 'PENDING' ORDER BY createdAt ASC")
     suspend fun getPending(): List<SleepSessionEntity>
 
