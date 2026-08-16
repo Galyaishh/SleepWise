@@ -20,9 +20,13 @@ import java.util.concurrent.TimeUnit
 
 data class StageTick(
     val t: String,
-    val stage: String,
+    val stage: String,          // binary alarm stage (Deep/Light) — drives the wake decision
     val conf: Float,
     val stable: Boolean,
+    // 4-stage report label (Wake/Light/Deep/REM) from the separate report model.
+    // Display-only; null on older sessions / when the report model isn't loaded.
+    @com.google.gson.annotations.SerializedName("report_stage")
+    val reportStage: String? = null,
 )
 
 data class SessionUpload(

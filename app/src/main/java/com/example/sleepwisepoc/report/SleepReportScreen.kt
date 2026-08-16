@@ -118,7 +118,9 @@ private fun computeStageDurations(ticks: List<StageTick>): StageDurations {
         val t0   = instants[i] ?: return@forEachIndexed
         val t1ms = instants.getOrNull(i + 1)?.toEpochMilli() ?: (t0.toEpochMilli() + avgMs)
         val mins = ((t1ms - t0.toEpochMilli()) / 60_000L).coerceAtLeast(0L)
-        when (tick.stage.trim().lowercase()) {
+        // Prefer the 4-stage report label (Wake/Light/Deep/REM); fall back to the
+        // binary alarm stage on older sessions that predate the report model.
+        when ((tick.reportStage ?: tick.stage).trim().lowercase()) {
             "wake", "awake" -> awake += mins
             "rem"           -> rem   += mins
             "deep"          -> deep  += mins
@@ -157,7 +159,7 @@ private fun buildRibbon(session: SessionRecord): RibbonData {
     val raw = ticks.mapIndexedNotNull { i, tick ->
         val t0 = instants[i] ?: return@mapIndexedNotNull null
         val t1 = instants.getOrNull(i + 1)?.toEpochMilli() ?: endMs
-        Raw(tick.stage.toSleepStage(), relMin(t0.toEpochMilli()), relMin(t1))
+        Raw((tick.reportStage ?: tick.stage).toSleepStage(), relMin(t0.toEpochMilli()), relMin(t1))
     }
 
     // Merge consecutive same-stage runs

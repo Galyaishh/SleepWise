@@ -29,6 +29,10 @@ class TFLiteSleepPredictor(private val context: Context) {
         private const val TAG = "TFLiteSleepPredictor"
         private const val MODEL_FILE = "sleep_stage_model.tflite"
         private const val METADATA_FILE = "tflite_metadata.json"
+        // Second, DISPLAY-ONLY model: 4-stage (Wake/Light/Deep/REM) morning report.
+        // Same 45-feature vector; NOT used for the wake decision (that stays binary).
+        private const val REPORT_MODEL_FILE = "report_model.tflite"
+        private const val REPORT_METADATA_FILE = "report_metadata.json"
 
         const val WARMUP_EPOCHS = 5    // min history before predicting (rolling windows warm up)
         const val NUM_CLASSES = 2
@@ -44,6 +48,12 @@ class TFLiteSleepPredictor(private val context: Context) {
     private var scalerScale: FloatArray? = null
     private var featureNames: List<String> = emptyList()
     private var classNames: List<String> = listOf("Light", "Deep")
+
+    // 4-stage report model (display-only). Own interpreter + scaler; same feature order.
+    private var reportInterpreter: Interpreter? = null
+    private var reportScalerMean: FloatArray? = null
+    private var reportScalerScale: FloatArray? = null
+    private var reportClassNames: List<String> = listOf("Wake", "Light", "Deep", "REM")
 
     // Full-night per-epoch histories (needed for expanding/rolling causal features).
     private val hrMeanHist = mutableListOf<Float>()
@@ -89,9 +99,19 @@ class TFLiteSleepPredictor(private val context: Context) {
 
     fun initialize(): Boolean {
         return try {
-            interpreter = Interpreter(loadModelFile())
+            interpreter = Interpreter(loadModelFile(MODEL_FILE))
             loadMetadata()
             Log.d(TAG, "TFLite loaded: ${featureNames.size} features, classes=$classNames")
+            // Best-effort: the 4-stage report model is optional — a missing asset must
+            // NOT break the alarm. If it loads, the morning report gets 4 stages.
+            try {
+                reportInterpreter = Interpreter(loadModelFile(REPORT_MODEL_FILE))
+                loadReportMetadata()
+                Log.d(TAG, "Report TFLite loaded: classes=$reportClassNames")
+            } catch (e: Exception) {
+                Log.w(TAG, "Report model not loaded (report falls back to binary): ${e.message}")
+                reportInterpreter = null
+            }
             true
         } catch (e: Exception) {
             Log.e(TAG, "Failed to initialize TFLite: ${e.message}")
@@ -99,10 +119,15 @@ class TFLiteSleepPredictor(private val context: Context) {
         }
     }
 
-    private fun loadModelFile(): MappedByteBuffer {
-        val fd = context.assets.openFd(MODEL_FILE)
+    private fun loadModelFile(name: String): MappedByteBuffer {
+        val fd = context.assets.openFd(name)
         val fileChannel = FileInputStream(fd.fileDescriptor).channel
         return fileChannel.map(FileChannel.MapMode.READ_ONLY, fd.startOffset, fd.declaredLength)
+    }
+
+    private fun floatArr(json: JSONObject, key: String, nanFill: Float): FloatArray {
+        val a = json.getJSONArray(key)
+        return FloatArray(a.length()) { if (a.get(it).toString() == "NaN") nanFill else a.getDouble(it).toFloat() }
     }
 
     private fun loadMetadata() {
@@ -111,10 +136,17 @@ class TFLiteSleepPredictor(private val context: Context) {
         featureNames = (0 until fa.length()).map { fa.getString(it) }
         val ca = json.getJSONArray("class_names")
         classNames = (0 until ca.length()).map { ca.getString(it) }
-        val ma = json.getJSONArray("scaler_mean")
-        scalerMean = FloatArray(ma.length()) { if (ma.get(it).toString() == "NaN") 0f else ma.getDouble(it).toFloat() }
-        val sa = json.getJSONArray("scaler_scale")
-        scalerScale = FloatArray(sa.length()) { if (sa.get(it).toString() == "NaN") 1f else sa.getDouble(it).toFloat() }
+        scalerMean = floatArr(json, "scaler_mean", 0f)
+        scalerScale = floatArr(json, "scaler_scale", 1f)
+    }
+
+    private fun loadReportMetadata() {
+        val json = JSONObject(context.assets.open(REPORT_METADATA_FILE).bufferedReader().use { it.readText() })
+        val ca = json.getJSONArray("class_names")
+        reportClassNames = (0 until ca.length()).map { ca.getString(it) }
+        reportScalerMean = floatArr(json, "scaler_mean", 0f)
+        reportScalerScale = floatArr(json, "scaler_scale", 1f)
+        // report model shares the binary model's feature order (same FEATS) — no separate list needed
     }
 
     fun addEpoch(f: EpochFeatures) {
@@ -200,12 +232,35 @@ class TFLiteSleepPredictor(private val context: Context) {
     }
 
     /** StandardScaler, then NaN→0 (missing features carry no signal; masks flag presence). */
-    private fun normalizeFeatures(features: FloatArray): FloatArray {
-        val mean = scalerMean ?: return features
-        val scale = scalerScale ?: return features
+    private fun normalizeWith(features: FloatArray, mean: FloatArray?, scale: FloatArray?): FloatArray {
+        if (mean == null || scale == null) return features
         return FloatArray(features.size) { i ->
             if (i < mean.size && i < scale.size && scale[i] != 0f && !features[i].isNaN())
                 (features[i] - mean[i]) / scale[i] else 0f
+        }
+    }
+    private fun normalizeFeatures(features: FloatArray): FloatArray =
+        normalizeWith(features, scalerMean, scalerScale)
+
+    /**
+     * 4-stage report label for the current epoch (Wake/Light/Deep/REM), via the
+     * separate report model. Reuses the SAME 45-feature vector as the alarm; just a
+     * different scaler + softmax argmax (no EMA/hysteresis — the report shows the
+     * per-minute stage). Returns null if the report model isn't loaded or we're
+     * still in warmup. DISPLAY ONLY — never gates the alarm.
+     */
+    fun predictReportStage(): String? {
+        val interp = reportInterpreter ?: return null
+        if (!canPredict()) return null
+        val normalized = normalizeWith(computeFeatureVector(), reportScalerMean, reportScalerScale)
+        val output = Array(1) { FloatArray(reportClassNames.size) }
+        return try {
+            interp.run(arrayOf(normalized), output)
+            var best = 0
+            for (j in output[0].indices) if (output[0][j] > output[0][best]) best = j
+            reportClassNames.getOrNull(best)
+        } catch (e: Exception) {
+            Log.w(TAG, "report inference failed: ${e.message}"); null
         }
     }
 
@@ -298,5 +353,8 @@ class TFLiteSleepPredictor(private val context: Context) {
         }
     }
 
-    fun close() { interpreter?.close(); interpreter = null }
+    fun close() {
+        interpreter?.close(); interpreter = null
+        reportInterpreter?.close(); reportInterpreter = null
+    }
 }

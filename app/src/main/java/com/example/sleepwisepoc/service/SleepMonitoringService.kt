@@ -312,11 +312,16 @@ class SleepMonitoringService : Service() {
             if (predictor?.canPredict() == true) {
                 lastPred = predictor?.predict()
                 if (lastPred != null) {
+                    // 4-stage label for the morning report (display-only; same feature
+                    // vector, separate model). Must run right after predict() so it sees
+                    // the same epoch. Never influences the alarm.
+                    val reportStage = predictor?.predictReportStage()
                     tickHistory += StageTick(
                         t = Instant.ofEpochMilli(epoch.endTimeMs).toString(),
                         stage = lastPred!!.sleepStage,
                         conf = lastPred!!.confidence,
                         stable = lastPred!!.isStable,
+                        reportStage = reportStage,
                     )
                     // Snapshot tickHistory to Room after every tick so a crash
                     // mid-night loses at most the current prediction pass.
