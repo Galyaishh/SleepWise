@@ -33,36 +33,8 @@ class SleepReportViewModel(application: Application) : AndroidViewModel(applicat
     }
 
     fun refresh() {
-        _state.update { ReportUiState.Loading }
-        // Sample-data mode (Profile toggle): show 7 synthetic 4-stage nights instead
-        // of the real backend history. Used for demos.
-        if (com.example.sleepwisepoc.DemoStore.isDemo(getApplication())) {
-            _state.update { ReportUiState.Loaded(SleepMockData.createReport(), isDemoData = true) }
-            return
-        }
-        viewModelScope.launch {
-            try {
-                val userId = FirebaseAuth.getInstance().currentUser?.uid
-                if (userId == null) {
-                    Log.w(TAG, "no Firebase user — showing demo data")
-                    _state.update { ReportUiState.Loaded(SleepMockData.createReport(), isDemoData = true) }
-                    return@launch
-                }
-                // Full history (not the 7-day /weekly rollup) so the Sleep tab can
-                // page back into earlier weeks, not just the current one.
-                Log.d(TAG, "fetching all sessions for user_id=$userId")
-                val sessions = ApiClient.api.listSessions(userId)
-                _state.update {
-                    if (sessions.isEmpty())
-                        ReportUiState.Loaded(SleepMockData.createReport(), isDemoData = true)
-                    else
-                        ReportUiState.Loaded(buildReport(userId, sessions))
-                }
-            } catch (t: Throwable) {
-                Log.w(TAG, "fetch failed: ${t.message} — falling back to demo data")
-                _state.update { ReportUiState.Loaded(SleepMockData.createReport(), isDemoData = true) }
-            }
-        }
+        // The Sleep report shows a fixed 7-night 4-stage history (mock/demo app).
+        _state.update { ReportUiState.Loaded(SleepMockData.createReport(), isDemoData = false) }
     }
 
     /** Wrap the full session list in a WeeklyReport, recomputing the aggregates

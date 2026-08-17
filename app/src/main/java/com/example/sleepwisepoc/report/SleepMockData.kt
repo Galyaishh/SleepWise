@@ -8,8 +8,8 @@ import java.time.ZoneId
 import kotlin.random.Random
 
 /**
- * Generates a realistic 7-night weekly report for demo/sample mode (toggled via
- * [com.example.sleepwisepoc.DemoStore]). Each night uses a different sleep-
+ * Generates a realistic 7-night weekly report — the Sleep tab's fixed history in
+ * this demo app. Each night uses a different sleep-
  * architecture pattern so every visual element of the hypnogram (stage
  * transitions, REM cycles, fragmentation) is exercised. Every tick carries a
  * 4-stage report_stage (Wake/Light/Deep/REM) plus the binary alarm stage, so the
