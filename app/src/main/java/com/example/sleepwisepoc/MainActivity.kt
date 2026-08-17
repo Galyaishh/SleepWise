@@ -158,7 +158,7 @@ private fun MainScaffold(onSignOut: () -> Unit = {}, onToggleTheme: () -> Unit =
     ) { innerPadding ->
         Box(Modifier.fillMaxSize().padding(innerPadding).statusBarsPadding()) {
             when (selectedTab) {
-                0 -> TonightScreen(modifier = Modifier.fillMaxSize())
+                0 -> TonightScreen(modifier = Modifier.fillMaxSize(), onChangeAlarm = { selectedTab = 1 })
                 1 -> ScheduleScreen(modifier = Modifier.fillMaxSize())
                 2 -> SleepReportScreen(modifier = Modifier.fillMaxSize())
                 3 -> ProfileScreen(modifier = Modifier.fillMaxSize(), onSignOut = onSignOut, onToggleTheme = onToggleTheme)

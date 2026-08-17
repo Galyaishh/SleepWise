@@ -177,8 +177,18 @@ fun SecondaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modi
 @Composable
 fun TextLink(text: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val c = LocalSleepColors.current
-    Text(text, modifier = modifier.clickable(onClick = onClick).padding(6.dp),
-        fontFamily = PlexSans, fontSize = 14.sp, color = c.dim, textAlign = TextAlign.Center)
+    // Confine the click ripple to the text (rounded), not the full-width row —
+    // otherwise a fillMaxWidth() caller gets a rectangular "square" ripple.
+    Box(modifier = modifier, contentAlignment = Alignment.Center) {
+        Text(
+            text,
+            modifier = Modifier
+                .clip(RoundedCornerShape(10.dp))
+                .clickable(onClick = onClick)
+                .padding(horizontal = 12.dp, vertical = 6.dp),
+            fontFamily = PlexSans, fontSize = 14.sp, color = c.dim, textAlign = TextAlign.Center,
+        )
+    }
 }
 
 /** Small mono pill — filled (INSTALL) or outlined (FIX). */

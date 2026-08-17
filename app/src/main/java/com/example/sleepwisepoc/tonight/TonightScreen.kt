@@ -98,6 +98,7 @@ private fun requestBatteryOptimizationExemption(context: Context) {
 fun TonightScreen(
     modifier: Modifier = Modifier,
     viewModel: TonightViewModel = viewModel(),
+    onChangeAlarm: () -> Unit = {},
 ) {
     val c = LocalSleepColors.current
     val state by viewModel.state.collectAsState()
@@ -233,7 +234,7 @@ fun TonightScreen(
             when (home) {
                 HomeState.IDLE -> TextLink(
                     text = "Change tonight's alarm",
-                    onClick = { /* Schedule tab lives in the bottom nav */ },
+                    onClick = onChangeAlarm,
                     modifier = Modifier.fillMaxWidth(),
                 )
                 HomeState.TRACKING -> Text(
