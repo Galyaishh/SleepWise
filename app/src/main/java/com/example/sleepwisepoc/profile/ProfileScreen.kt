@@ -245,7 +245,7 @@ fun ProfileScreen(
                         )
                         Spacer(Modifier.height(2.dp))
                         Text(
-                            if (isWatchConnected) "Connected · 82% · synced 4m ago" else "Pair one to get smart wake-ups",
+                            if (isWatchConnected) "Connected" else "Pair one to get smart wake-ups",
                             fontFamily = PlexSans, fontSize = 13.sp, color = c.dim,
                         )
                     }
