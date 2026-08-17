@@ -8,46 +8,52 @@ import java.time.ZoneId
 import kotlin.random.Random
 
 /**
- * Generates a realistic 3-night weekly report for demo/offline mode.
- * Each night uses a different sleep-architecture pattern so every visual
- * element of the hypnogram (stage transitions, REM cycles, fragmentation)
- * is exercised.
+ * Generates a realistic 7-night weekly report for demo/sample mode (toggled via
+ * [com.example.sleepwisepoc.DemoStore]). Each night uses a different sleep-
+ * architecture pattern so every visual element of the hypnogram (stage
+ * transitions, REM cycles, fragmentation) is exercised. Every tick carries a
+ * 4-stage report_stage (Wake/Light/Deep/REM) plus the binary alarm stage, so the
+ * report renders the full 4-stage hypnogram exactly as a real night would.
  */
 internal object SleepMockData {
 
-    fun createReport(): WeeklyReport {
-        val sessions = listOf(
-            buildSession(
-                id = 1L,
-                daysAgo = 1,
-                bedHour = 22, bedMin = 35,
-                wakeHour = 6, wakeMin = 47,
-                windowStartHour = 6, windowStartMin = 30,
-                windowEndHour = 7,   windowEndMin = 0,
-                firedReason = "favorable",
-                pattern = NIGHT_GOOD,
-            ),
-            buildSession(
-                id = 2L,
-                daysAgo = 2,
-                bedHour = 23, bedMin = 10,
-                wakeHour = 6, wakeMin = 22,
-                windowStartHour = 6, windowStartMin = 0,
-                windowEndHour = 7,   windowEndMin = 0,
-                firedReason = "favorable",
-                pattern = NIGHT_AVERAGE,
-            ),
-            buildSession(
-                id = 3L,
-                daysAgo = 3,
-                bedHour = 22, bedMin = 50,
-                wakeHour = 7, wakeMin = 30,
-                windowStartHour = 7, windowStartMin = 0,
-                windowEndHour = 7,   windowEndMin = 30,
-                firedReason = "fallback",
-                pattern = NIGHT_FRAGMENTED,
-            ),
+    /** One night's spec: how many days ago, bed/wake/window times, fire reason, architecture. */
+    private data class NightSpec(
+        val daysAgo: Long,
+        val bedHour: Int, val bedMin: Int,
+        val wakeHour: Int, val wakeMin: Int,
+        val winStartH: Int, val winStartM: Int,
+        val winEndH: Int, val winEndM: Int,
+        val firedReason: String,
+        val pattern: List<Pair<String, Int>>,
+    )
+
+    // lazy so the pattern vals below are initialised before this list references them
+    private val NIGHTS by lazy {
+        listOf(
+            NightSpec(1, 22, 40, 6, 43, 6, 30, 7, 0, "favorable", NIGHT_GOOD),
+            NightSpec(2, 23, 15, 6, 52, 6, 30, 7, 0, "favorable", NIGHT_AVERAGE),
+            NightSpec(3, 0, 5, 7, 12, 6, 45, 7, 15, "favorable", NIGHT_REM_HEAVY),
+            NightSpec(4, 22, 20, 6, 20, 6, 0, 6, 30, "favorable", NIGHT_DEEP_HEAVY),
+            NightSpec(5, 23, 40, 7, 8, 6, 45, 7, 15, "fallback", NIGHT_FRAGMENTED),
+            NightSpec(6, 22, 55, 6, 38, 6, 15, 6, 45, "favorable", NIGHT_SOLID),
+            NightSpec(7, 23, 25, 6, 30, 6, 0, 6, 30, "favorable", NIGHT_AVERAGE),
         )
+    }
+
+    fun createReport(): WeeklyReport {
+        val sessions = NIGHTS.mapIndexed { i, n ->
+            buildSession(
+                id = (i + 1).toLong(),
+                daysAgo = n.daysAgo,
+                bedHour = n.bedHour, bedMin = n.bedMin,
+                wakeHour = n.wakeHour, wakeMin = n.wakeMin,
+                windowStartHour = n.winStartH, windowStartMin = n.winStartM,
+                windowEndHour = n.winEndH, windowEndMin = n.winEndM,
+                firedReason = n.firedReason,
+                pattern = n.pattern,
+            )
+        }
 
         return WeeklyReport(
             user_id          = "demo",
@@ -55,7 +61,7 @@ internal object SleepMockData {
             fired_count      = sessions.size,
             favorable_count  = sessions.count { it.fired_reason == "favorable" },
             fallback_count   = sessions.count { it.fired_reason == "fallback" },
-            avg_window_minutes = 40f,
+            avg_window_minutes = 30f,
         )
     }
 
@@ -120,6 +126,53 @@ internal object SleepMockData {
         "Wake"  to 5,    // window ends without light detection → fallback
     )
 
+    /** REM-heavy night: longer, more frequent REM cycles toward morning */
+    private val NIGHT_REM_HEAVY = listOf(
+        "Wake"  to 5,
+        "Light" to 15,
+        "Deep"  to 35,
+        "REM"   to 20,
+        "Light" to 20,
+        "Deep"  to 30,
+        "REM"   to 35,
+        "Light" to 15,
+        "Deep"  to 20,
+        "REM"   to 45,
+        "Light" to 20,
+        "REM"   to 40,
+        "Light" to 50,
+    )
+
+    /** Deep-heavy night: dominant slow-wave sleep early, restorative */
+    private val NIGHT_DEEP_HEAVY = listOf(
+        "Wake"  to 5,
+        "Light" to 10,
+        "Deep"  to 55,
+        "Light" to 10,
+        "Deep"  to 50,
+        "REM"   to 20,
+        "Deep"  to 40,
+        "Light" to 15,
+        "Deep"  to 25,
+        "REM"   to 25,
+        "Light" to 45,
+    )
+
+    /** Solid, well-balanced night: even cycling of all four stages */
+    private val NIGHT_SOLID = listOf(
+        "Wake"  to 5,
+        "Light" to 15,
+        "Deep"  to 40,
+        "REM"   to 20,
+        "Light" to 20,
+        "Deep"  to 40,
+        "REM"   to 25,
+        "Light" to 20,
+        "Deep"  to 25,
+        "REM"   to 30,
+        "Light" to 50,
+    )
+
     // ── Builder ───────────────────────────────────────────────────────────────
 
     private fun buildSession(
@@ -170,9 +223,12 @@ internal object SleepMockData {
                 ticks.add(
                     StageTick(
                         t      = current.toString(),
-                        stage  = stage,
+                        // binary alarm view: only Deep vs everything-else (Light)
+                        stage  = if (stage == "Deep") "Deep" else "Light",
                         conf   = stageConf(stage),
                         stable = stage != "Wake",
+                        // 4-stage report view (what the report renders)
+                        reportStage = stage,
                     )
                 )
                 current = current.plusSeconds(intervalSec)

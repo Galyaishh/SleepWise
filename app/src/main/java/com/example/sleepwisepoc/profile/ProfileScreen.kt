@@ -82,6 +82,7 @@ fun ProfileScreen(
     var showSignOutDialog by remember { mutableStateOf(false) }
     var showConnectDialog by remember { mutableStateOf(false) }
     var isDark by remember { mutableStateOf(ThemeStore.isDark(context)) }
+    var sampleData by remember { mutableStateOf(com.example.sleepwisepoc.DemoStore.isDemo(context)) }
     var startQuietly by remember { mutableStateOf(true) }
     var alarmSound by remember { mutableStateOf("Dawn Chorus") }
 
@@ -303,6 +304,15 @@ fun ProfileScreen(
                     desc = "The alarm begins soft and gets louder over 45 seconds",
                     checked = startQuietly,
                     onCheckedChange = { startQuietly = it },
+                )
+                SettingToggleRow(
+                    label = "Sample data",
+                    desc = if (sampleData) "On — Sleep tab shows 7 sample nights" else "Off — showing your real nights",
+                    checked = sampleData,
+                    onCheckedChange = {
+                        sampleData = it
+                        com.example.sleepwisepoc.DemoStore.setDemo(context, it)
+                    },
                 )
                 ChevronSettingRow(
                     label = "Permissions",

@@ -307,6 +307,9 @@ fun SleepReportScreen(
 ) {
     val c = LocalSleepColors.current
     val state by viewModel.state.collectAsState()
+    // Re-read on each entry so the Profile "Sample data" toggle takes effect when
+    // you switch back to this tab.
+    androidx.compose.runtime.LaunchedEffect(Unit) { viewModel.refresh() }
     Box(modifier = modifier.fillMaxSize().background(c.bg)) {
         when (val s = state) {
             ReportUiState.Loading   -> MessageView("Loading your nights.")

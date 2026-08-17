@@ -34,6 +34,12 @@ class SleepReportViewModel(application: Application) : AndroidViewModel(applicat
 
     fun refresh() {
         _state.update { ReportUiState.Loading }
+        // Sample-data mode (Profile toggle): show 7 synthetic 4-stage nights instead
+        // of the real backend history. Used for demos.
+        if (com.example.sleepwisepoc.DemoStore.isDemo(getApplication())) {
+            _state.update { ReportUiState.Loaded(SleepMockData.createReport(), isDemoData = true) }
+            return
+        }
         viewModelScope.launch {
             try {
                 val userId = FirebaseAuth.getInstance().currentUser?.uid
