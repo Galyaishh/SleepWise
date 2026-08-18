@@ -11,6 +11,12 @@ inference runs on the phone, offline; the server is never in the decision loop.
 
 ---
 
+## App video
+https://github.com/user-attachments/assets/d240ce9a-a383-406e-a553-780644a63655
+
+
+---
+
 ## Proof — a real overnight
 
 A full night on a Galaxy Watch5 Pro: tracked all night, detected deep-sleep bouts,
