@@ -362,9 +362,9 @@ private fun StatusCard(
             halo = false
             title = "Watch connected"
             body = when (watchStatus) {
-                WatchStatus.NoRecentData -> "Pulse Watch · paired, syncing overnight."
-                WatchStatus.Checking     -> "Pulse Watch · checking connection…"
-                else                     -> "Pulse Watch · synced and ready."
+                WatchStatus.NoRecentData -> "Galaxy Watch · paired, syncing overnight."
+                WatchStatus.Checking     -> "Galaxy Watch · checking connection…"
+                else                     -> "Galaxy Watch · synced and ready."
             }
         }
         HomeState.DISCONNECTED -> {
