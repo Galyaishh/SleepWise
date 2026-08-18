@@ -12,7 +12,9 @@ inference runs on the phone, offline; the server is never in the decision loop.
 ---
 
 ## App video
-https://github.com/user-attachments/assets/d240ce9a-a383-406e-a553-780644a63655
+
+https://github.com/user-attachments/assets/27fc95e4-60c4-48c2-98e6-4125444c3d61
+
 
 
 ---
