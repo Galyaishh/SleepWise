@@ -31,7 +31,7 @@ internal object SleepMockData {
     // lazy so the pattern vals below are initialised before this list references them
     private val NIGHTS by lazy {
         listOf(
-            NightSpec(1, 22, 40, 6, 43, 6, 30, 7, 0, "favorable", NIGHT_GOOD),
+            NightSpec(1, 22, 40, 8, 23, 8, 10, 8, 40, "favorable", NIGHT_GOOD),
             NightSpec(2, 23, 15, 6, 52, 6, 30, 7, 0, "favorable", NIGHT_AVERAGE),
             NightSpec(3, 0, 5, 7, 12, 6, 45, 7, 15, "favorable", NIGHT_REM_HEAVY),
             NightSpec(4, 22, 20, 6, 20, 6, 0, 6, 30, "favorable", NIGHT_DEEP_HEAVY),
